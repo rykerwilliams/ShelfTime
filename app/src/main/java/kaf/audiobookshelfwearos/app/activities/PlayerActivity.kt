@@ -82,7 +82,7 @@ class PlayerActivity : ComponentActivity() {
 
         // Start the PlayerService
         val intent = Intent(this, PlayerService::class.java)
-        startService(intent)
+        startForegroundService(intent)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
 
         setContent {
@@ -153,7 +153,7 @@ class PlayerActivity : ComponentActivity() {
                         onClick = {
                             val intent = Intent(this@PlayerActivity, PlayerService::class.java)
                             intent.action = "ACTION_REWIND"
-                            startService(intent)
+                            startForegroundService(intent)
                         }) {
                         Icon(
                             tint = Color.White,
@@ -191,7 +191,7 @@ class PlayerActivity : ComponentActivity() {
                         IconButton(modifier = Modifier.fillMaxSize(), onClick = {
                             val intent = Intent(this@PlayerActivity, PlayerService::class.java)
                             intent.action = "ACTION_PLAY_PAUSE"
-                            startService(intent)
+                            startForegroundService(intent)
                             isPlaying = !isPlaying
                         }) {
                             Icon(
@@ -210,7 +210,7 @@ class PlayerActivity : ComponentActivity() {
                         .weight(1f), onClick = {
                         val intent = Intent(this@PlayerActivity, PlayerService::class.java)
                         intent.action = "ACTION_FAST_FORWARD"
-                        startService(intent)
+                        startForegroundService(intent)
                     }) {
                         Icon(
                             modifier = Modifier

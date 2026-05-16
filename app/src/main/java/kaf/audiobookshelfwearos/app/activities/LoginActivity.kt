@@ -121,7 +121,7 @@ class LoginActivity : ComponentActivity() {
         }
 
         if (Build.VERSION.SDK_INT >= 33) {
-            if (!shouldShowRequestPermissionRationale(Manifest.permission.LOCATION_HARDWARE)) requestPermissions(
+            if (!shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) requestPermissions(
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                 1
             )

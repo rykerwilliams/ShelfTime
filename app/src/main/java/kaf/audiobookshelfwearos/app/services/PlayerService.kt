@@ -37,7 +37,6 @@ import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -413,7 +412,7 @@ class PlayerService : MediaSessionService() {
 
     // The user dismissed the app from the recent tasks
     override fun onTaskRemoved(rootIntent: Intent?) {
-        val player = mediaSession?.player!!
+        val player = mediaSession?.player ?: return
         if (!player.playWhenReady
             || player.mediaItemCount == 0
             || player.playbackState == Player.STATE_ENDED
@@ -526,7 +525,7 @@ class PlayerService : MediaSessionService() {
         }
 
         intent?.getStringExtra("id")?.let { id ->
-            GlobalScope.launch {
+            scope.launch {
                 db.libraryItemDao().getLibraryItemById(id)?.let {
                     withContext(Dispatchers.Main) {
                         var time = intent.getDoubleExtra("time", -1.0)
@@ -572,9 +571,6 @@ class PlayerService : MediaSessionService() {
             player.release()
             release()
             mediaSession = null
-        }
-        if (::exoPlayer.isInitialized) { // Check if exoPlayer is initialized before releasing
-            exoPlayer.release()
         }
         job.cancel()
         super.onDestroy()
