@@ -61,6 +61,9 @@ class PlayerService : MediaSessionService() {
 
     private var playbackStartTime: Long = 0
     private var totalPlaybackTime: Long = 0
+    private var pausedAtMs: Long = 0L
+    private val REWIND_ON_RESUME_MS = 3000L
+    private val MIN_PAUSE_DURATION_TO_REWIND_MS = 3000L
     private var ONGOING_NOTIFICATION_ID: Int = 151
     private var CHANNEL_NAME: String = "Player"
 
@@ -258,11 +261,19 @@ class PlayerService : MediaSessionService() {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) {
                     Timber.tag("PlayerService").d("ExoPlayer is playing")
+                    if (pausedAtMs != 0L) {
+                        val pauseDuration = System.currentTimeMillis() - pausedAtMs
+                        if (pauseDuration >= MIN_PAUSE_DURATION_TO_REWIND_MS) {
+                            exoPlayer.seekTo((exoPlayer.currentPosition - REWIND_ON_RESUME_MS).coerceAtLeast(0))
+                        }
+                        pausedAtMs = 0L
+                    }
                     playbackStartTime = System.currentTimeMillis()
                     startPeriodicProgressSaving()
                     sendBroadcast(Intent("$packageName.ACTION_PLAYING"))
                 } else {
                     Timber.tag("PlayerService").d("ExoPlayer is paused")
+                    pausedAtMs = System.currentTimeMillis()
                     stopPeriodicProgressSaving()
                     saveProgress() // Final save on pause
                     sendBroadcast(Intent("$packageName.ACTION_PAUSE"))
