@@ -4,6 +4,7 @@ import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.wifi.WifiManager
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -49,11 +50,24 @@ class MyDownloadService : DownloadService(
     /* channelDescriptionResourceId= */ 0
 ) {
     private lateinit var downloadNotificationHelper: DownloadNotificationHelper
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
         downloadNotificationHelper =
             DownloadNotificationHelper(this, DOWNLOAD_NOTIFICATION_CHANNEL_ID);
+
+        // Without this, WearOS aggressively downclocks Wi-Fi in the background,
+        // which is why downloads crawl even on a fast LAN (see upstream issue #20).
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        wifiLock = wifiManager
+            ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ShelfTime:download")
+            ?.apply { setReferenceCounted(false); acquire() }
+    }
+
+    override fun onDestroy() {
+        wifiLock?.let { if (it.isHeld) it.release() }
+        super.onDestroy()
     }
 
     override fun getDownloadManager(): DownloadManager {
