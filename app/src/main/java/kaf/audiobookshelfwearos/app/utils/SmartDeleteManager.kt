@@ -4,7 +4,6 @@ import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import android.content.Context
 import android.widget.Toast
-import androidx.media3.common.util.Log
 import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.services.MyDownloadService
@@ -39,7 +38,7 @@ class SmartDeleteManager(private val context: Context) {
             val itemsWithDownloadInfo = downloadedItems.mapNotNull { item ->
                 val firstTrack = item.media.tracks.firstOrNull()
                 if (firstTrack != null) {
-                    val download = downloadManager.downloadIndex.getDownload(firstTrack.contentUrl)
+                    val download = downloadManager.downloadIndex.getDownload(firstTrack.id)
                     if (download != null) {
                         item to download.updateTimeMs
                     } else null
