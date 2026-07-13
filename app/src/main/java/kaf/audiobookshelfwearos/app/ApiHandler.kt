@@ -145,7 +145,7 @@ class ApiHandler(private val context: Context) {
     suspend fun getLibraryItems(id: String): List<LibraryItem> {
         return withContext(Dispatchers.IO) {
             if (BuildConfig.DEBUG) Thread.sleep(1500)
-            val request = getRequest("/api/libraries/$id/items?sort=updatedAt")
+            val request = getRequest("/api/libraries/$id/items?sort=progress&desc=1")
 
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) showToast(response.code.toString())
@@ -155,7 +155,7 @@ class ApiHandler(private val context: Context) {
                 val results = jsonResponse?.getJSONArray("results")
                 Timber.d(results?.length().toString())
                 val items: List<LibraryItem> =
-                    jacksonMapper.readValue<List<LibraryItem>>(results.toString()).reversed()
+                    jacksonMapper.readValue<List<LibraryItem>>(results.toString())
                 return@use items
             }
         }
