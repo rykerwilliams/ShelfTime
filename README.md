@@ -34,3 +34,10 @@ This is a standalone app for Android Wear OS. This project is made as a side pro
 - [x] Offline covers
 - [x] Search option
 - [ ] Getting unfinished audiobooks
+
+## Installing a custom build
+
+This fork includes fixes and features (sort order, sleep timer, Smart
+Delete, download speed fix, etc.) not in the Play Store release. See
+[SIDELOADING.md](SIDELOADING.md) for how to install a build from this repo
+directly onto your watch.
