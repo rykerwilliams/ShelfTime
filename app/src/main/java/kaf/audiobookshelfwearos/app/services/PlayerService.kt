@@ -37,7 +37,9 @@ import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -594,6 +596,23 @@ class PlayerService : MediaSessionService() {
     fun setSpeed(speed: Float) {
         exoPlayer.setPlaybackSpeed(speed)
         userDataManager.speed = speed
+    }
+
+    private var sleepTimerJob: Job? = null
+
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = scope.launch {
+            delay(minutes * 60_000L)
+            withContext(Dispatchers.Main) {
+                exoPlayer.pause()
+            }
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
     }
 
     companion object {

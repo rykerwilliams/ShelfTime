@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
@@ -286,6 +287,9 @@ class PlayerActivity : ComponentActivity() {
     private fun BottomLayout(currentPosition: Long, duration: Long) {
         var showVolumeSlider by remember { mutableStateOf(false) }
         var showSpeedSlider by remember { mutableStateOf(false) }
+        var showSleepTimerConfirmation by remember { mutableStateOf(false) }
+        val sleepTimerPresetsMinutes = listOf(0, 15, 30, 45, 60)
+        var sleepTimerIndex by remember { mutableIntStateOf(0) }
 
         if (showSpeedSlider) {
             Column(
@@ -342,6 +346,18 @@ class PlayerActivity : ComponentActivity() {
                     segmented = false
                 )
             }
+        } else if (showSleepTimerConfirmation) {
+            val minutes = sleepTimerPresetsMinutes[sleepTimerIndex]
+            Column(
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = if (minutes > 0) "Sleep timer: $minutes min" else "Sleep timer off",
+                    color = Color.LightGray,
+                    fontSize = 13.sp
+                )
+            }
         } else Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -388,6 +404,27 @@ class PlayerActivity : ComponentActivity() {
                         contentDescription = "Speed"
                     )
                 }
+                IconButton(modifier = Modifier
+                    .fillMaxHeight()
+                    .weight(1f), onClick = {
+                    sleepTimerIndex = (sleepTimerIndex + 1) % sleepTimerPresetsMinutes.size
+                    val minutes = sleepTimerPresetsMinutes[sleepTimerIndex]
+                    if (minutes > 0) {
+                        playerService?.setSleepTimer(minutes)
+                    } else {
+                        playerService?.cancelSleepTimer()
+                    }
+                    showSleepTimerConfirmation = true
+                }) {
+                    Icon(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(2.dp),
+                        tint = if (sleepTimerPresetsMinutes[sleepTimerIndex] > 0) Color.White else Color.Gray,
+                        imageVector = Icons.Filled.Bedtime,
+                        contentDescription = "Sleep timer"
+                    )
+                }
             }
         }
 
@@ -403,6 +440,13 @@ class PlayerActivity : ComponentActivity() {
             if (showSpeedSlider) {
                 delay(5000)  // Wait for 5 seconds
                 showSpeedSlider = false  // Show Button A after 5 seconds
+            }
+        }
+
+        LaunchedEffect(showSleepTimerConfirmation) {
+            if (showSleepTimerConfirmation) {
+                delay(2000)
+                showSleepTimerConfirmation = false
             }
         }
     }
