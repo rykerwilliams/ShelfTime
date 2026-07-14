@@ -54,6 +54,9 @@ jobs:
       - name: Generate Gradle Wrapper (version from wrapper properties)
         run: gradle wrapper --gradle-version 8.13
 
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug
 
