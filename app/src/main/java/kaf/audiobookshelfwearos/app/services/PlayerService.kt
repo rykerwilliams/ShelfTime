@@ -441,7 +441,9 @@ class PlayerService : MediaSessionService() {
 
     @OptIn(UnstableApi::class)
     private fun setAudiobook(audiobook: LibraryItem, userTotalTime: Double) {
+        cancelSleepTimer()
         this.audiobook = audiobook
+        currentlyPlayingItemId = audiobook.id
         exoPlayer.clearMediaItems()
 
         //getting chapter by time
@@ -586,6 +588,9 @@ class PlayerService : MediaSessionService() {
             mediaSession = null
         }
         job.cancel()
+        if (currentlyPlayingItemId == audiobook.id) {
+            currentlyPlayingItemId = null
+        }
         super.onDestroy()
     }
 
@@ -616,6 +621,12 @@ class PlayerService : MediaSessionService() {
     }
 
     companion object {
+        // The id of the LibraryItem currently loaded for playback, so other
+        // components (e.g. SmartDeleteManager) can avoid touching it.
+        @Volatile
+        var currentlyPlayingItemId: String? = null
+            private set
+
         fun setAudiobook(
             context: Context,
             item: LibraryItem,
