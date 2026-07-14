@@ -132,6 +132,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: List available Wear OS system images
+        run: sdkmanager --list 2>/dev/null | grep -i "android-wear" || echo "NO WEAR IMAGES FOUND"
+
       - name: Run instrumented smoke test on a Wear OS emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
