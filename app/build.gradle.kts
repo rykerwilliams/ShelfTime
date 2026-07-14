@@ -4,6 +4,11 @@ plugins {
     id ("kotlin-kapt")
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")
+    id("jacoco")
+}
+
+jacoco {
+    toolVersion = "0.8.12"
 }
 
 
@@ -20,9 +25,13 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -102,9 +111,44 @@ dependencies {
 
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.08.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+
+    val fileFilter = listOf(
+        "**/R.class", "**/R$*.class", "**/BuildConfig.*", "**/Manifest*.*",
+        "**/*Test*.*", "android/**/*.*", "**/*$Companion*.*"
+    )
+
+    val kotlinClasses = fileTree("${layout.buildDirectory.get()}/tmp/kotlin-classes/debug") {
+        exclude(fileFilter)
+    }
+    val javaClasses = fileTree("${layout.buildDirectory.get()}/intermediates/javac/debug/classes") {
+        exclude(fileFilter)
+    }
+
+    classDirectories.setFrom(files(kotlinClasses, javaClasses))
+    sourceDirectories.setFrom(files("$projectDir/src/main/java"))
+    executionData.setFrom(
+        fileTree(layout.buildDirectory.get()) {
+            include(
+                "jacoco/testDebugUnitTest.exec",
+                "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec"
+            )
+        }
+    )
 }
