@@ -2,42 +2,55 @@
 
 ![banner](https://github.com/mkaflowski/Audiobookshelf-WearOS/blob/main/raw/banner%20small.jpg?raw=true)
 
+[![Build Debug APK](https://github.com/rykerwilliams/ShelfTime/actions/workflows/build-apk.yml/badge.svg)](https://github.com/rykerwilliams/ShelfTime/actions/workflows/build-apk.yml)
 
-[Audiobookshelf](https://github.com/advplyr/audiobookshelf) for Android WearOS!
-
-<a href="https://play.google.com/store/apps/details?id=kaf.audiobookshelfwearos">
-    <img src="https://play.google.com/intl/en_us/badges/images/generic/en_badge_web_generic.png" width="30%" alt="Google Play Badge">
-</a>
+[Audiobookshelf](https://github.com/advplyr/audiobookshelf) for Android WearOS.
 
 ---
 
 ## About
 
-This is a standalone app for Android Wear OS. This project is made as a side project. The application was created because at the moment the creators of the main application have no plans to create a version for smart watches.
+This is a fork of [mkaflowski/ShelfTime](https://github.com/mkaflowski/ShelfTime), a standalone Wear OS client for Audiobookshelf. The original maintainer hasn't merged a PR or pushed a commit since September 2025, so several long-open community fixes and feature requests were sitting unreviewed. This fork picks those up and continues active development.
+
+**This build is not published on the Play Store.** Install it by sideloading — see [SIDELOADING.md](SIDELOADING.md) for step-by-step instructions (grab a prebuilt APK from this repo's [GitHub Actions](https://github.com/rykerwilliams/ShelfTime/actions) or build it yourself).
+
+The original project's README is preserved at [README.original.md](README.original.md) for reference.
 
 ---
 
 ## Features
 
-- **User Authentication** 🔒: Allows users to securely log in to access their accounts.
-- **Display Audiobooks** 📚: Showcases all available audiobooks on the server.
-- **Chapter Information Retrieval** 🔍: Enables users to fetch detailed information about the chapters of each audiobook.
-- **Listening** 🎧: Allows users to listen to audiobooks directly through the app.
-- **Controls** ⏪⏩: Control the playback (rewind, fast forward etc.).
-- **Full Audiobook Download** ⬇️: Provides the option to download entire audiobooks for offline listening.
-- **Progress Synchronization** 🔄: Automatically syncs listening progress with the server to maintain continuity across different devices.
-- **Offline Mode** 📴: Listen to downloaded audiobooks, sync progress later when you are connected.
+- **User Authentication** 🔒: Securely log in to your Audiobookshelf server.
+- **Library Browsing** 📚: Browse all audiobooks on the server, sorted by what you last listened to.
+- **Chapters** 🔍: View chapter information for each audiobook.
+- **Playback** 🎧: Listen directly on your watch, with rewind/fast-forward controls and a short automatic rewind when resuming from a real pause.
+- **Sleep Timer** 🌙: Set playback to stop after 15/30/45/60 minutes.
+- **Downloads** ⬇️: Download full audiobooks for offline listening, without the Wi-Fi slowdowns of the original app.
+- **Smart Delete** 🧹: Automatically remove your oldest downloads once you pass a configurable limit, without ever touching whatever you're currently listening to.
+- **Progress Sync** 🔄: Listening progress syncs with the server automatically.
+- **Offline Mode** 📴: Keep listening to downloaded books with no connection; progress syncs once you're back online.
+- **Search** 🔎: Filter your library by title or author.
 
-## TODO
-- [x] Volume control
-- [x] Speed control
-- [x] Offline covers
-- [x] Search option
+## What's different from the original app
+
+- Fixed a Wear OS 6 / Pixel Watch 4 compatibility crash (foreground service startup, a wrong permission check, a double ExoPlayer release).
+- Fixed slow downloads on the same Wi-Fi network as your server (the watch was aggressively downclocking Wi-Fi in the background).
+- Added a sleep timer.
+- Added Smart Delete, so a large library doesn't fill up your watch's storage.
+- Library now sorts by most-recently-progressed instead of most-recently-modified.
+- Rewinds a few seconds when you resume from an actual pause, not just when opening a book fresh.
+- First unit tests in the project's history, run on every push via GitHub Actions.
+
+## Roadmap
+
+- [ ] OIDC / SSO login support
+- [ ] Pagination for large libraries
 - [ ] Getting unfinished audiobooks
 
-## Installing a custom build
+## Installing
 
-This fork includes fixes and features (sort order, sleep timer, Smart
-Delete, download speed fix, etc.) not in the Play Store release. See
-[SIDELOADING.md](SIDELOADING.md) for how to install a build from this repo
-directly onto your watch.
+See [SIDELOADING.md](SIDELOADING.md).
+
+## Credits
+
+Built on top of [mkaflowski/ShelfTime](https://github.com/mkaflowski/ShelfTime) and incorporates fixes from its community forks and open PRs, including work by [PhilippM7](https://github.com/PhilippM7), [Karlmit](https://github.com/Karlmit), and [Andead2](https://github.com/Andead2).
