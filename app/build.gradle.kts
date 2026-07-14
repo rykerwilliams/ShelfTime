@@ -131,7 +131,7 @@ tasks.register<JacocoReport>("jacocoTestReport") {
 
     val fileFilter = listOf(
         "**/R.class", "**/R$*.class", "**/BuildConfig.*", "**/Manifest*.*",
-        "**/*Test*.*", "android/**/*.*", "**/*$Companion*.*"
+        "**/*Test*.*", "android/**/*.*", "**/*\$Companion*.*"
     )
 
     val kotlinClasses = fileTree("${layout.buildDirectory.get()}/tmp/kotlin-classes/debug") {
