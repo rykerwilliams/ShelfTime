@@ -4,8 +4,11 @@ object DownloadProgressCalculator {
     private val speedHistory = mutableMapOf<String, MutableList<Pair<Long, Long>>>()
     private val smoothedSpeeds = mutableMapOf<String, Long>()
     
-    fun calculateDownloadSpeed(trackId: String, bytesDownloaded: Long): Long {
-        val currentTime = System.currentTimeMillis()
+    fun calculateDownloadSpeed(
+        trackId: String,
+        bytesDownloaded: Long,
+        currentTime: Long = System.currentTimeMillis()
+    ): Long {
         val history = speedHistory.getOrPut(trackId) { mutableListOf() }
         
         // Only add if we have actual progress

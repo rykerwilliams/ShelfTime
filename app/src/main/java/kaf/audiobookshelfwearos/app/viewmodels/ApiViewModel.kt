@@ -14,6 +14,7 @@ import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.data.Library
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.User
+import kaf.audiobookshelfwearos.app.utils.LibrarySearchFilter
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -236,21 +237,10 @@ class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
 
     private fun filterLibraries(query: String) {
         val currentLibraries = _libraries.value ?: emptyList()
-        if (query.isBlank()) {
-            _filteredLibraries.value = currentLibraries
-            return
-        }
-        
-        val filtered = currentLibraries.map { library ->
-            val filteredItems = library.libraryItems.filter { item ->
-                item.title.contains(query, ignoreCase = true) ||
-                item.author.contains(query, ignoreCase = true)
-            }
-            library.copy(libraryItems = ArrayList(filteredItems))
-        }.filter { it.libraryItems.isNotEmpty() }
-        
-        _filteredLibraries.value = filtered
-    }    class ApiViewModelFactory(private val apiHandler: ApiHandler) :
+        _filteredLibraries.value = LibrarySearchFilter.filter(currentLibraries, query)
+    }
+
+    class ApiViewModelFactory(private val apiHandler: ApiHandler) :
         ViewModelProvider.NewInstanceFactory() {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return ApiViewModel(apiHandler = apiHandler) as T
