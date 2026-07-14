@@ -132,30 +132,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: List available Wear OS system images
-        run: |
-          echo "=== environment ==="
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          which sdkmanager || echo "sdkmanager not on PATH"
-          echo "=== locating sdkmanager binary directly ==="
-          SDKMANAGER=$(find /usr/local/lib/android/sdk/cmdline-tools -name sdkmanager 2>/dev/null | head -1)
-          echo "Using: $SDKMANAGER"
-          echo "=== accepting licenses first ==="
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          echo "=== total line count of --list output (sanity check) ==="
-          "$SDKMANAGER" --list 2>&1 | wc -l
-          echo "=== grep 'wear' (any case), stdout+stderr, no --list filtering ==="
-          "$SDKMANAGER" --list 2>&1 | grep -i "wear" || echo "none"
-          echo "=== grep 'wear' across --list --include_obsolete ==="
-          "$SDKMANAGER" --list --include_obsolete 2>&1 | grep -i "wear" || echo "none"
-          echo "=== sample of system-images lines (first 40) ==="
-          "$SDKMANAGER" --list 2>&1 | grep "system-images" | head -40
-
       - name: Run instrumented smoke test on a Wear OS emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 29
+          api-level: 33
           target: android-wear
           arch: x86_64
           script: ./gradlew connectedDebugAndroidTest
