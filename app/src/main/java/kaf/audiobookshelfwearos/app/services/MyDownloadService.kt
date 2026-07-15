@@ -28,6 +28,7 @@ import kaf.audiobookshelfwearos.app.data.DownloadState
 import kaf.audiobookshelfwearos.app.data.Track
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
+import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
 import kaf.audiobookshelfwearos.app.utils.SmartDeleteManager
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -59,7 +60,7 @@ class MyDownloadService : DownloadService(
     }
 
     override fun onDestroy() {
-        releaseWifiLock()
+        releaseWifiLock(this)
         super.onDestroy()
     }
 
@@ -108,11 +109,21 @@ class MyDownloadService : DownloadService(
                     ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ShelfTime:download")
                     ?.apply { setReferenceCounted(false) }
             }
-            wifiLock?.let { if (!it.isHeld) it.acquire() }
+            wifiLock?.let {
+                if (!it.isHeld) {
+                    it.acquire()
+                    PerformanceLogger.logSnapshot(context, "download_wifi_lock_acquired")
+                }
+            }
         }
 
-        private fun releaseWifiLock() {
-            wifiLock?.let { if (it.isHeld) it.release() }
+        private fun releaseWifiLock(context: Context) {
+            wifiLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                    PerformanceLogger.logSnapshot(context, "download_wifi_lock_released")
+                }
+            }
         }
 
         // Progress flow for emitting download progress updates
@@ -213,7 +224,7 @@ class MyDownloadService : DownloadService(
                         super.onDownloadsPausedChanged(downloadManager, downloadsPaused)
                         Timber.d("onDownloadsPausedChanged")
                         if (downloadsPaused) {
-                            releaseWifiLock()
+                            releaseWifiLock(context)
                         }
                     }
 
@@ -269,7 +280,7 @@ class MyDownloadService : DownloadService(
                     override fun onIdle(downloadManager: DownloadManager) {
                         super.onIdle(downloadManager)
                         Timber.d("onIdle")
-                        releaseWifiLock()
+                        releaseWifiLock(context)
                     }
 
                     override fun onRequirementsStateChanged(

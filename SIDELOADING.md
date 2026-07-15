@@ -101,6 +101,24 @@ log you in automatically if it has your login and password too.
 Keep your filled-in `shelftime-config.json` around (e.g. alongside the APK)
 so you can re-push it after any future reinstall.
 
+## 5. Pulling performance logs
+
+Every debug build writes a rolling log file to the app's external files
+directory — the same one used for downloads and the config file above — so
+you can use the app normally for a while and pull the log afterward instead
+of needing a live `adb logcat` session running the whole time. It's capped
+at 5 files x 2MB, oldest rotated out first.
+
+```bash
+adb pull /sdcard/Android/data/kaf.audiobookshelfwearos/files/logs/ ./shelftime-logs/
+```
+
+Beyond the app's normal diagnostic logging, look for lines tagged `Perf` —
+those are battery/memory snapshots taken at the moments that actually drain
+a watch battery (playback starting/stopping, a download session's Wi-Fi
+lock being acquired/released), so you can see the before/after delta around
+a specific session instead of just a raw log stream.
+
 ## Troubleshooting
 
 - **`adb connect` fails / times out**: re-check the watch is on the same

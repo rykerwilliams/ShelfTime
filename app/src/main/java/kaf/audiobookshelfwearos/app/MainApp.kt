@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.room.Room
 import kaf.audiobookshelfwearos.BuildConfig
 import kaf.audiobookshelfwearos.app.data.room.AppDatabase
+import kaf.audiobookshelfwearos.app.utils.FileLoggingTree
+import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
 import kaf.audiobookshelfwearos.app.workers.SyncWorker
 import timber.log.Timber
 
@@ -14,7 +16,9 @@ class MainApp : Application() {
         super.onCreate()
         if (BuildConfig.DEBUG) {
             Timber.plant(LineNumberDebugTree())
+            Timber.plant(FileLoggingTree(this))
         }
+        PerformanceLogger.logSnapshot(this, "app_start")
 
         database = Room.databaseBuilder(
             applicationContext,

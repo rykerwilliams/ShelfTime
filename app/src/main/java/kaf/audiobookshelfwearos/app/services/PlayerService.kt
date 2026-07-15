@@ -20,7 +20,6 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ConcatenatingMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaSession
@@ -36,6 +35,7 @@ import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.room.AppDatabase
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
+import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -275,6 +275,7 @@ class PlayerService : MediaSessionService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                PerformanceLogger.logSnapshot(this@PlayerService, if (isPlaying) "playback_started" else "playback_stopped")
                 if (isPlaying) {
                     Timber.tag("PlayerService").d("ExoPlayer is playing")
                     if (pausedAtMs != 0L) {
@@ -467,6 +468,15 @@ class PlayerService : MediaSessionService() {
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(headers)
 
+        // Create a read-only cache data source factory using the download cache. Same
+        // factory/cache instance for every track — no reason to re-resolve it per track.
+        val downloadCache = MyDownloadService.getDownloadCache(this)
+        val cacheDataSourceFactory: DataSource.Factory =
+            CacheDataSource.Factory()
+                .setCache(downloadCache)
+                .setUpstreamDataSourceFactory(dataSourceFactory)
+                .setCacheWriteDataSinkFactory(null) // Disable writing.
+
         val sources = arrayListOf<MediaSource>()
         for (track in audiobook.media.tracks) {
             val url =
@@ -484,25 +494,9 @@ class PlayerService : MediaSessionService() {
                     )
                     .build()
 
-            // Build a track source using the data source factory
-            val downloaded = track.isDownloaded(this)
-            Timber.d("${track.index} downloaded = $downloaded")
-
-            val downloadCache = MyDownloadService.getDownloadCache(this)
-
-            // Create a read-only cache data source factory using the download cache.
-            val cacheDataSourceFactory: DataSource.Factory =
-                CacheDataSource.Factory()
-                    .setCache(downloadCache)
-                    .setUpstreamDataSourceFactory(dataSourceFactory)
-                    .setCacheWriteDataSinkFactory(null) // Disable writing.
-
             val mediaSource: MediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory)
                 .createMediaSource(mediaItem)
             sources.add(mediaSource)
-
-            val concatenatingMediaSource = ConcatenatingMediaSource()
-            concatenatingMediaSource.addMediaSource(mediaSource)
         }
 
         exoPlayer.run {
