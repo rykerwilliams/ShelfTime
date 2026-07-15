@@ -138,4 +138,7 @@ jobs:
           api-level: 33
           target: android-wear
           arch: x86_64
-          script: ./gradlew connectedDebugAndroidTest
+          script: |
+            adb shell input keyevent KEYCODE_WAKEUP
+            adb shell wm dismiss-keyguard
+            ./gradlew connectedDebugAndroidTest
