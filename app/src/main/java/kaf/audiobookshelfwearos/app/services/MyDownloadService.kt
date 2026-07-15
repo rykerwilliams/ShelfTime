@@ -51,23 +51,15 @@ class MyDownloadService : DownloadService(
     /* channelDescriptionResourceId= */ 0
 ) {
     private lateinit var downloadNotificationHelper: DownloadNotificationHelper
-    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
         downloadNotificationHelper =
             DownloadNotificationHelper(this, DOWNLOAD_NOTIFICATION_CHANNEL_ID);
-
-        // Without this, WearOS aggressively downclocks Wi-Fi in the background,
-        // which is why downloads crawl even on a fast LAN (see upstream issue #20).
-        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        wifiLock = wifiManager
-            ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ShelfTime:download")
-            ?.apply { setReferenceCounted(false); acquire() }
     }
 
     override fun onDestroy() {
-        wifiLock?.let { if (it.isHeld) it.release() }
+        releaseWifiLock()
         super.onDestroy()
     }
 
@@ -102,7 +94,27 @@ class MyDownloadService : DownloadService(
         private val downloadManagerLock = Any()
         private val databaseProviderLock = Any()
         private val downloadCacheLock = Any()
-        
+
+        // WearOS aggressively downclocks Wi-Fi in the background, which is why downloads
+        // crawl even on a fast LAN (see upstream issue #20). Only held while a download is
+        // actually in flight, and released as soon as the manager goes idle or is paused.
+        private var wifiLock: WifiManager.WifiLock? = null
+
+        private fun acquireWifiLock(context: Context) {
+            if (wifiLock == null) {
+                val wifiManager =
+                    context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                wifiLock = wifiManager
+                    ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ShelfTime:download")
+                    ?.apply { setReferenceCounted(false) }
+            }
+            wifiLock?.let { if (!it.isHeld) it.acquire() }
+        }
+
+        private fun releaseWifiLock() {
+            wifiLock?.let { if (it.isHeld) it.release() }
+        }
+
         // Progress flow for emitting download progress updates
         private val progressUpdateFlow = MutableSharedFlow<DownloadProgress>(
             replay = 1,
@@ -200,6 +212,9 @@ class MyDownloadService : DownloadService(
                     ) {
                         super.onDownloadsPausedChanged(downloadManager, downloadsPaused)
                         Timber.d("onDownloadsPausedChanged")
+                        if (downloadsPaused) {
+                            releaseWifiLock()
+                        }
                     }
 
                     override fun onDownloadChanged(
@@ -208,7 +223,11 @@ class MyDownloadService : DownloadService(
                         finalException: Exception?
                     ) {
                         super.onDownloadChanged(downloadManager, download, finalException)
-                        
+
+                        if (download.state == Download.STATE_DOWNLOADING) {
+                            acquireWifiLock(context)
+                        }
+
                         // Calculate and emit progress
                         val progress = calculateProgress(download)
                         Timber.d("Calculated progress for ${download.request.id}: ${progress.percentComplete}%, speed: ${progress.downloadSpeed}")
@@ -250,6 +269,7 @@ class MyDownloadService : DownloadService(
                     override fun onIdle(downloadManager: DownloadManager) {
                         super.onIdle(downloadManager)
                         Timber.d("onIdle")
+                        releaseWifiLock()
                     }
 
                     override fun onRequirementsStateChanged(
