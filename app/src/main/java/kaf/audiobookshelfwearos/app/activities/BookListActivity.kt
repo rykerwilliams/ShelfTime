@@ -411,7 +411,9 @@ class BookListActivity : ComponentActivity() {
     @Composable
     private fun CoverImage(itemId: String) {
         val coverUrls by viewModel.coverImages.observeAsState()
-        viewModel.getCoverImage(itemId, this)
+        LaunchedEffect(itemId) {
+            viewModel.getCoverImage(itemId, this@BookListActivity)
+        }
 
         AsyncImage(
             model = coverUrls?.get(itemId) ?: "",

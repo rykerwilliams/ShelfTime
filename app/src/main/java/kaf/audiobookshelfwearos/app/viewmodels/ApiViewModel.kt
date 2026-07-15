@@ -15,16 +15,22 @@ import kaf.audiobookshelfwearos.app.data.Library
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.User
 import kaf.audiobookshelfwearos.app.utils.LibrarySearchFilter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+
+// Cover art is only ever shown at small list-row/player sizes on a watch screen,
+// so there's no reason to keep a full-resolution decode of the source JPEG in memory.
+private const val COVER_MAX_DIMENSION_PX = 300
 
 class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
     private val _loginResult = MutableLiveData<User>()
@@ -58,40 +64,64 @@ class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
     }
 
     fun getCoverImage(itemId: String, context: Context) {
-        val currentImages = _coverImages.value ?: mapOf()
-
-        if (currentImages.containsKey(itemId)) {
-            _coverImages.postValue(currentImages)
-            return  // If the image is already loaded, do nothing.
-        }
-
-        val cachedCover = loadBitmapFromCache(context,itemId)
-        if(cachedCover!=null){
-            val updatedImages = currentImages.toMutableMap()
-            updatedImages[itemId] = cachedCover
-            _coverImages.postValue(updatedImages)
-            return
+        if (_coverImages.value?.containsKey(itemId) == true) {
+            return  // Already loaded; nothing to do.
         }
 
         viewModelScope.launch {
-            val bitmap = apiHandler.getCover(itemId)
-            bitmap?.let {
-                // Post new state with updated image.
-                saveBitmapToCache(context, bitmap, itemId)
-                val updatedImages = currentImages.toMutableMap()
-                updatedImages[itemId] = it
-                _coverImages.postValue(updatedImages)
+            val cachedCover = withContext(Dispatchers.IO) { loadBitmapFromCache(context, itemId) }
+            if (cachedCover != null) {
+                postCoverImage(itemId, cachedCover)
+                return@launch
             }
+
+            val bitmap = apiHandler.getCover(itemId) ?: return@launch
+            val downsampled = downsampleToMaxDimension(bitmap, COVER_MAX_DIMENSION_PX)
+            withContext(Dispatchers.IO) { saveBitmapToCache(context, downsampled, itemId) }
+            postCoverImage(itemId, downsampled)
         }
+    }
+
+    private fun postCoverImage(itemId: String, bitmap: Bitmap) {
+        val updatedImages = (_coverImages.value ?: mapOf()).toMutableMap()
+        updatedImages[itemId] = bitmap
+        _coverImages.postValue(updatedImages)
     }
 
     private fun loadBitmapFromCache(context: Context, filename: String): Bitmap? {
         val file = File(context.cacheDir, "$filename.jpg")
-        return if (file.exists()) {
-            BitmapFactory.decodeFile(file.absolutePath)
-        } else {
-            null
+        if (!file.exists()) return null
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = calculateInSampleSize(bounds, COVER_MAX_DIMENSION_PX, COVER_MAX_DIMENSION_PX)
         }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val (height, width) = options.outHeight to options.outWidth
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight = height / 2
+            val halfWidth = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
+    private fun downsampleToMaxDimension(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        val largestSide = maxOf(bitmap.width, bitmap.height)
+        if (largestSide <= maxDimension) return bitmap
+
+        val scale = maxDimension.toFloat() / largestSide
+        val targetWidth = (bitmap.width * scale).toInt().coerceAtLeast(1)
+        val targetHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
     }
 
     private fun saveBitmapToCache(context: Context, bitmap: Bitmap, filename: String): File? {
@@ -100,10 +130,10 @@ class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
 
         try {
             FileOutputStream(file).use { fos ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos)
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
             }
         } catch (e: IOException) {
-            e.printStackTrace()
+            Timber.e(e, "Failed to save cover to cache for $filename")
             return null
         }
         return file
