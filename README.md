@@ -42,6 +42,7 @@ The original project's README is preserved at [README.original.md](README.origin
 - Rewinds a few seconds when you resume from an actual pause, not just when opening a book fresh.
 - Fixed playback stopping outright when the watch screen turns off (ExoPlayer held no wake lock at all).
 - Fixed the download progress bar freezing instead of updating live.
+- Fixed slow playback start (an unused debug log line was running a SQLite query against the download index, once per track, on the main thread, before playback could begin).
 - A round of battery/performance fixes: Wi-Fi lock only held while actually downloading, cover art decoded off the main thread and downsampled, redundant network/polling loops collapsed, notification rebuilds throttled.
 - Sideloadable config file, so a reinstall doesn't mean retyping your server and login on the watch.
 - First unit tests and instrumented (Wear OS emulator) tests in the project's history, both run on every push via GitHub Actions, with code coverage reporting.

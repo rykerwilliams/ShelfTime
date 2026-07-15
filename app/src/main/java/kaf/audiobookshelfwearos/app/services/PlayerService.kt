@@ -20,8 +20,6 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.wear.ongoing.OngoingActivity
@@ -477,27 +475,13 @@ class PlayerService : MediaSessionService() {
                 .setUpstreamDataSourceFactory(dataSourceFactory)
                 .setCacheWriteDataSinkFactory(null) // Disable writing.
 
-        val sources = arrayListOf<MediaSource>()
-        for (track in audiobook.media.tracks) {
-            val url =
-                userDataManager.getCompleteAddress() + track.contentUrl
-
-            val mediaItem =
-                MediaItem.Builder()
-                    .setMediaId("track-index-" + track.index)
-                    .setUri(url)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setArtist(audiobook.media.metadata.authorName)
-                            .setTitle(audiobook.media.metadata.title)
-                            .build()
-                    )
-                    .build()
-
-            val mediaSource: MediaSource = ProgressiveMediaSource.Factory(cacheDataSourceFactory)
-                .createMediaSource(mediaItem)
-            sources.add(mediaSource)
-        }
+        val sources = PlayerMediaSourceBuilder.buildSources(
+            audiobook.media.tracks,
+            userDataManager.getCompleteAddress(),
+            audiobook.media.metadata.authorName,
+            audiobook.media.metadata.title,
+            cacheDataSourceFactory
+        )
 
         exoPlayer.run {
             setMediaSources(sources)
