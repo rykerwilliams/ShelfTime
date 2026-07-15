@@ -1,0 +1,6 @@
+{
+  "protocol": "http",
+  "serverAddress": "192.168.1.50:13378",
+  "login": "your-username",
+  "password": "your-password"
+}

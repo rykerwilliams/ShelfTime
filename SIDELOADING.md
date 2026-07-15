@@ -7,7 +7,12 @@ Play Store — this is called sideloading.
 
 ## 1. Get the APK
 
-Every push to this repo builds a debug APK automatically via GitHub Actions.
+The easiest way: grab the latest prebuilt APK from
+[**Releases**](https://github.com/rykerwilliams/ShelfTime/releases) — download
+`ShelfTime-vX.Y.apk` from the newest release.
+
+To try an unreleased branch instead, every push to this repo also builds a
+debug APK via GitHub Actions:
 
 1. Go to the repo's **Actions** tab and open the latest successful
    **Build Debug APK** run for the branch you want.
@@ -64,21 +69,23 @@ lose your saved login), the app will read a config file if you push one to
 its external files directory, and use it to fill in the login screen — or
 log you in automatically if it has your login and password too.
 
-1. Create a JSON file with whichever fields you want pre-filled — all of
-   them are optional, and any field you leave out just falls back to typing
-   it manually as before:
+1. Copy [`shelftime-config.example.json`](shelftime-config.example.json) from
+   the repo root to `shelftime-config.json` and fill in your values. All
+   four fields are optional — any you leave out (or delete from the file)
+   just falls back to typing it manually as before:
 
    ```json
    {
      "protocol": "http",
      "serverAddress": "192.168.1.50:13378",
-     "login": "myusername",
-     "password": "mypassword"
+     "login": "your-username",
+     "password": "your-password"
    }
    ```
 
 2. Push it to the app's external files directory (same directory the app
-   already uses for downloads — no storage permission needed):
+   already uses for downloads — no storage permission needed). The
+   filename has to be exactly `shelftime-config.json`:
 
    ```bash
    adb push shelftime-config.json /sdcard/Android/data/kaf.audiobookshelfwearos/files/shelftime-config.json
@@ -91,8 +98,8 @@ log you in automatically if it has your login and password too.
    `password` were included, it logs you in automatically without needing a
    tap.
 
-Keep your local copy of `shelftime-config.json` around (e.g. alongside the
-APK) so you can re-push it after any future reinstall.
+Keep your filled-in `shelftime-config.json` around (e.g. alongside the APK)
+so you can re-push it after any future reinstall.
 
 ## Troubleshooting
 

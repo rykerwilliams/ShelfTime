@@ -30,6 +30,7 @@ The original project's README is preserved at [README.original.md](README.origin
 - **Progress Sync** 🔄: Listening progress syncs with the server automatically.
 - **Offline Mode** 📴: Keep listening to downloaded books with no connection; progress syncs once you're back online.
 - **Search** 🔎: Filter your library by title or author.
+- **Sideloadable Config** ⚙️: Skip retyping your server/login on the watch's tiny keyboard — push a JSON file and it pre-fills (or auto-logs in). See [SIDELOADING.md](SIDELOADING.md).
 
 ## What's different from the original app
 
@@ -39,7 +40,12 @@ The original project's README is preserved at [README.original.md](README.origin
 - Added Smart Delete, so a large library doesn't fill up your watch's storage.
 - Library now sorts by most-recently-progressed instead of most-recently-modified.
 - Rewinds a few seconds when you resume from an actual pause, not just when opening a book fresh.
-- First unit tests in the project's history, run on every push via GitHub Actions.
+- Fixed playback stopping outright when the watch screen turns off (ExoPlayer held no wake lock at all).
+- Fixed the download progress bar freezing instead of updating live.
+- A round of battery/performance fixes: Wi-Fi lock only held while actually downloading, cover art decoded off the main thread and downsampled, redundant network/polling loops collapsed, notification rebuilds throttled.
+- Sideloadable config file, so a reinstall doesn't mean retyping your server and login on the watch.
+- First unit tests and instrumented (Wear OS emulator) tests in the project's history, both run on every push via GitHub Actions, with code coverage reporting.
+- [Releases](https://github.com/rykerwilliams/ShelfTime/releases) with prebuilt APKs, instead of only building from source.
 
 ## Roadmap
 
