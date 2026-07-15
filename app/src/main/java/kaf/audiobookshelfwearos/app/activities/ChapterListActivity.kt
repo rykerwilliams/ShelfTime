@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.sp
 import kaf.audiobookshelfwearos.app.data.AudiobookDownloadProgress
@@ -156,8 +155,11 @@ class ChapterListActivity : ComponentActivity() {
                                 )
                             }
 
-                            itemsIndexed(media.chapters) { index, _ ->
-                                Chapter(this@run, media.chapters[index])
+                            itemsIndexed(
+                                media.chapters,
+                                key = { _, chapter -> chapter.id }
+                            ) { index, chapter ->
+                                Chapter(this@run, chapter)
                                 if (index != media.chapters.size) {
                                     Divider()
                                 }
@@ -175,7 +177,7 @@ class ChapterListActivity : ComponentActivity() {
     ) {
         // Collect download progress from service
         val downloadProgressFlow = MyDownloadService.getProgressFlow()
-        var trackProgresses by remember { mutableStateOf(mutableStateMapOf<String, DownloadProgress>()) }
+        val trackProgresses = remember { mutableStateMapOf<String, DownloadProgress>() }
         var audiobookProgress by remember { mutableStateOf<AudiobookDownloadProgress?>(null) }
 
         var isDownloaded by remember {
