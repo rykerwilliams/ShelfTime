@@ -57,8 +57,6 @@ import kaf.audiobookshelfwearos.app.data.AudiobookDownloadProgress
 import kaf.audiobookshelfwearos.app.data.DownloadProgress
 import kaf.audiobookshelfwearos.app.utils.AudiobookProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
-import androidx.media3.exoplayer.offline.Download
-import androidx.media3.common.C
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.itemsIndexed
@@ -80,7 +78,6 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.math.floor
@@ -241,104 +238,6 @@ class ChapterListActivity : ComponentActivity() {
             }
         }
 
-        // Periodic progress checker for more frequent updates
-        LaunchedEffect(isDownloading) {
-            while (isDownloading) {
-                try {
-                    // Check progress of all tracks manually
-                    val downloadManager = MyDownloadService.getDownloadManager(this@ChapterListActivity)
-                    var hasActiveDownloads = false
-                    
-                    for (track in libraryItem.media.tracks) {
-                        val download = downloadManager.downloadIndex.getDownload(track.id)
-                        if (download != null && download.state == Download.STATE_DOWNLOADING) {
-                            hasActiveDownloads = true
-                            
-                            // Calculate progress manually
-                            val percentComplete = if (download.percentDownloaded != C.PERCENTAGE_UNSET.toFloat()) {
-                                download.percentDownloaded
-                            } else {
-                                0f
-                            }
-                            
-                            val bytesDownloaded = download.bytesDownloaded
-                            val totalBytes = if (download.contentLength != -1L) {
-                                download.contentLength
-                            } else {
-                                if (percentComplete > 0) {
-                                    (bytesDownloaded / (percentComplete / 100f)).toLong()
-                                } else {
-                                    0L
-                                }
-                            }
-                            
-                            val downloadSpeed = DownloadProgressCalculator.calculateDownloadSpeed(
-                                track.id, 
-                                bytesDownloaded
-                            )
-                            val remainingBytes = totalBytes - bytesDownloaded
-                            val estimatedTime = DownloadProgressCalculator.calculateEstimatedTime(
-                                remainingBytes, 
-                                downloadSpeed
-                            )
-                            
-                            val manualProgress = DownloadProgress(
-                                trackId = track.id,
-                                bytesDownloaded = bytesDownloaded,
-                                totalBytes = totalBytes,
-                                percentComplete = percentComplete,
-                                downloadSpeed = downloadSpeed,
-                                estimatedTimeRemaining = estimatedTime,
-                                state = kaf.audiobookshelfwearos.app.data.DownloadState.DOWNLOADING
-                            )
-                            
-                            trackProgresses[track.id] = manualProgress
-                            Timber.d("Manual progress check for ${track.id}: ${percentComplete}%")
-                        }
-                    }
-                    
-                    // Update audiobook progress if we have active downloads
-                    if (hasActiveDownloads && trackProgresses.isNotEmpty()) {
-                        val currentProgresses = trackProgresses.values.toList()
-                        audiobookProgress = AudiobookProgressCalculator.calculateAudiobookProgress(
-                            libraryItem, 
-                            currentProgresses
-                        )
-                        Timber.d("Manual audiobook progress update: ${audiobookProgress?.overallProgress}%")
-                    }
-                    
-                    // Update download states
-                    downloadedCount = libraryItem.media.tracks.count { track -> 
-                        track.isDownloaded(this@ChapterListActivity) 
-                    }
-                    isDownloading = libraryItem.media.tracks.any { track ->
-                        track.isDownloading(this@ChapterListActivity)
-                    }
-                    isDownloaded = libraryItem.media.tracks.all { track -> 
-                        track.isDownloaded(this@ChapterListActivity) 
-                    }
-                    
-                } catch (e: Exception) {
-                    Timber.e(e, "Error in manual progress check")
-                }
-                
-                delay(2000L) // Check every 2 seconds
-            }
-        }
-
-        LaunchedEffect(isDownloading) {
-            while (isDownloading) {
-                downloadedCount =
-                    libraryItem.media.tracks.count { track -> track.isDownloaded(this@ChapterListActivity) }
-                isDownloading = libraryItem.media.tracks.any { track ->
-                    track.isDownloading(this@ChapterListActivity)
-                }
-                delay(1000L)
-            }
-            isDownloaded =
-                libraryItem.media.tracks.all { track -> track.isDownloaded(this@ChapterListActivity) }
-        }
-
         val isSyncing by viewModel.isSyncing.collectAsState()
 
         Column {
@@ -374,6 +273,9 @@ class ChapterListActivity : ComponentActivity() {
                         // Clear progress tracking
                         trackProgresses.clear()
                         audiobookProgress = null
+                        isDownloading = false
+                        isDownloaded = false
+                        downloadedCount = 0
                     } else {
                         Toast.makeText(
                             this@ChapterListActivity,
@@ -387,6 +289,7 @@ class ChapterListActivity : ComponentActivity() {
                                 track
                             )
                         }
+                        isDownloading = true
                     }
                 }) {
                     Icon(
