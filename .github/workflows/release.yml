@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.14) — tag vX.Y will be created and pushed"
+        required: true
+        type: string
 
 jobs:
   release:
@@ -14,6 +20,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Determine release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TAG="${{ steps.release_tag.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -61,14 +85,15 @@ jobs:
         run: ./gradlew assembleDebug
 
       - name: Rename APK for release
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/ShelfTime-${{ github.ref_name }}.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/ShelfTime-${{ steps.release_tag.outputs.tag }}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ShelfTime ${{ github.ref_name }}
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: ShelfTime ${{ steps.release_tag.outputs.tag }}
           generate_release_notes: true
-          files: app/build/outputs/apk/debug/ShelfTime-${{ github.ref_name }}.apk
+          files: app/build/outputs/apk/debug/ShelfTime-${{ steps.release_tag.outputs.tag }}.apk
           body: |
             Not signed for the Play Store — this is a debug build for sideloading.
             See [SIDELOADING.md](https://github.com/${{ github.repository }}/blob/main/SIDELOADING.md) for install instructions.
