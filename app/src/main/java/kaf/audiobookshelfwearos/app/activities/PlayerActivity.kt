@@ -49,6 +49,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.InlineSlider
 import androidx.wear.compose.material.InlineSliderDefaults
@@ -99,15 +102,18 @@ class PlayerActivity : ComponentActivity() {
         var duration by remember { mutableLongStateOf(0L) }
         var chapterTitle by remember { mutableStateOf("") }
 
-        LaunchedEffect(Unit) {
-            while (true) {
-                if (isBound) {
-                    currentPosition = playerService?.getCurrentPosition() ?: 0L
-                    playerService?.getDuration()?.let {
-                        if (it > 0) duration = it
+        val lifecycleOwner = LocalLifecycleOwner.current
+        LaunchedEffect(lifecycleOwner) {
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    if (isBound) {
+                        currentPosition = playerService?.getCurrentPosition() ?: 0L
+                        playerService?.getDuration()?.let {
+                            if (it > 0) duration = it
+                        }
                     }
+                    delay(1000)
                 }
-                delay(1000)
             }
         }
 
