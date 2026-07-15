@@ -26,6 +26,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.json.JSONObject
 import timber.log.Timber
+import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -162,6 +163,25 @@ class ApiHandler(private val context: Context) {
     }
 
     /**
+     * Fetches just this item's saved progress (not the whole library item with its
+     * chapters/tracks/metadata) so the pre-upload conflict check stays cheap.
+     * Returns null when the server has no progress record yet for this item.
+     */
+    private suspend fun getMediaProgress(libraryItemId: String): UserMediaProgress? {
+        return withContext(Dispatchers.IO) {
+            val request = getRequest("/api/me/progress/$libraryItemId")
+            client.newCall(request).execute().use { response ->
+                if (response.code == 404) return@use null
+                if (!response.isSuccessful) {
+                    throw IOException("getMediaProgress failed: ${response.code}")
+                }
+                val responseBody = response.body?.string()
+                jacksonMapper.readValue<UserMediaProgress>(responseBody.toString())
+            }
+        }
+    }
+
+    /**
      * Enhanced updateProgress with retry logic
      * @return Progress is now up to date
      */
@@ -170,31 +190,29 @@ class ApiHandler(private val context: Context) {
             try {
                 if (BuildConfig.DEBUG) Thread.sleep(1000)
 
-                val serverItem = getItem(userMediaProgress.libraryItemId)
+                val serverProgress = getMediaProgress(userMediaProgress.libraryItemId)
 
-                serverItem?.let {
-                    if (serverItem.userProgress.lastUpdate > userMediaProgress.lastUpdate) {
-                        Timber.d("Progress on server is more recent. Not uploading")
-                        userMediaProgress.toUpload = false
-                        insertLibraryItemToDB(userMediaProgress)
-                        return@withContext true
-                    }
-
-                    Timber.d("Uploading progress... (attempt ${retryCount + 1})")
-                    val success = uploadProgress(userMediaProgress)
-                    
-                    if (!success && retryCount < maxRetries) {
-                        val delay = baseDelayMs * (1 shl retryCount) // Exponential backoff
-                        Timber.d("Upload failed, retrying in ${delay}ms")
-                        delay(delay)
-                        return@withContext updateProgress(userMediaProgress, retryCount + 1)
-                    }
-                    
-                    return@withContext success
+                if (serverProgress != null && serverProgress.lastUpdate > userMediaProgress.lastUpdate) {
+                    Timber.d("Progress on server is more recent. Not uploading")
+                    userMediaProgress.toUpload = false
+                    insertLibraryItemToDB(userMediaProgress)
+                    return@withContext true
                 }
+
+                Timber.d("Uploading progress... (attempt ${retryCount + 1})")
+                val success = uploadProgress(userMediaProgress)
+
+                if (!success && retryCount < maxRetries) {
+                    val delay = baseDelayMs * (1 shl retryCount) // Exponential backoff
+                    Timber.d("Upload failed, retrying in ${delay}ms")
+                    delay(delay)
+                    return@withContext updateProgress(userMediaProgress, retryCount + 1)
+                }
+
+                return@withContext success
             } catch (e: Exception) {
                 Timber.e(e, "Failed to update progress (attempt ${retryCount + 1})")
-                
+
                 if (retryCount < maxRetries) {
                     val delay = baseDelayMs * (1 shl retryCount)
                     delay(delay)
