@@ -54,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.sp
 import kaf.audiobookshelfwearos.app.data.AudiobookDownloadProgress
 import kaf.audiobookshelfwearos.app.data.DownloadProgress
+import kaf.audiobookshelfwearos.app.data.DownloadState
 import kaf.audiobookshelfwearos.app.utils.AudiobookProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
@@ -77,6 +78,7 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.math.floor
@@ -237,6 +239,31 @@ class ChapterListActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error collecting download progress")
+            }
+        }
+
+        // MyDownloadService's listener only fires on state transitions (queued →
+        // downloading → completed), never on byte-level progress, so the flow above
+        // won't move the needle while a download is actually in flight — poll for that.
+        LaunchedEffect(isDownloading) {
+            while (isDownloading) {
+                delay(2000L)
+                try {
+                    for (track in libraryItem.media.tracks) {
+                        val progress = MyDownloadService.getDownloadProgress(this@ChapterListActivity, track.id)
+                        if (progress != null && progress.state == DownloadState.DOWNLOADING) {
+                            trackProgresses[track.id] = progress
+                        }
+                    }
+                    if (trackProgresses.isNotEmpty()) {
+                        audiobookProgress = AudiobookProgressCalculator.calculateAudiobookProgress(
+                            libraryItem,
+                            trackProgresses.values.toList()
+                        )
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Error polling download progress")
+                }
             }
         }
 

@@ -300,7 +300,15 @@ class MyDownloadService : DownloadService(
                 return downloadManager
             }
         }
-        
+
+        // Media3's DownloadManager.Listener only fires on state transitions
+        // (queued/downloading/completed), never on byte-level progress — callers that
+        // need live percent/speed/ETA while a download is in flight have to poll this.
+        fun getDownloadProgress(context: Context, trackId: String): DownloadProgress? {
+            val download = getDownloadManager(context).downloadIndex.getDownload(trackId) ?: return null
+            return calculateProgress(download)
+        }
+
         private fun calculateProgress(download: Download): DownloadProgress {
             val percentComplete = if (download.percentDownloaded != C.PERCENTAGE_UNSET.toFloat()) {
                 download.percentDownloaded
