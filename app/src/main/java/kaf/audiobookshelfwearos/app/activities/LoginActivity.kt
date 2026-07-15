@@ -17,6 +17,7 @@ import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import kaf.audiobookshelfwearos.R
 import kaf.audiobookshelfwearos.app.ApiHandler
+import kaf.audiobookshelfwearos.app.userdata.ConfigFileImporter
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kaf.audiobookshelfwearos.databinding.ActivityLoginBinding
@@ -60,6 +61,7 @@ class LoginActivity : ComponentActivity() {
         setTheme(android.R.style.Theme_DeviceDefault)
 
         userDataManager = UserDataManager(this)
+        val configImported = ConfigFileImporter.importIfPresent(this, userDataManager)
         viewModel.setShowErrorTaosts(!userDataManager.offlineMode)
 
         if (userDataManager.token.isNotEmpty()) {
@@ -100,6 +102,11 @@ class LoginActivity : ComponentActivity() {
         offlineModeCheckBox.isChecked = userDataManager.offlineMode
         offlineModeCheckBox.setOnCheckedChangeListener { _, isChecked ->
             userDataManager.offlineMode = isChecked
+        }
+
+        // A pushed config file fully covered login+password: skip the manual tap too.
+        if (configImported && userDataManager.login.isNotEmpty() && userDataManager.password.isNotEmpty()) {
+            viewModel.login()
         }
 
         viewModel.loginResult.observe(
