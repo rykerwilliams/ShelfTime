@@ -297,41 +297,31 @@ class PlayerService : MediaSessionService() {
     // Enhanced saveProgress method with periodic flag
     private fun saveProgress(isPeriodicSave: Boolean = false) {
         val currentPosition = getCurrentTotalPositionInS()
-        Timber.d("Saving progress - periodic: $isPeriodicSave, position: $currentPosition")
-        
-        Timber.d("getCurrentTotalPositionInS " + getCurrentTotalPositionInS())
-        Timber.d("progress " + audiobook.userProgress.progress)
-        Timber.d("duration " + audiobook.userProgress.duration)
-        Timber.d("episodeId " + audiobook.userProgress.episodeId)
-        Timber.d("id " + audiobook.userProgress.id)
-        Timber.d("currentTime " + audiobook.userProgress.currentTime)
-        Timber.d("lastUpdate " + audiobook.userProgress.lastUpdate)
+        Timber.d("Saving progress - periodic: $isPeriodicSave, position: $currentPosition, id: ${audiobook.id}")
 
         audiobook.userProgress.lastUpdate = System.currentTimeMillis()
         audiobook.userProgress.currentTime = currentPosition
         audiobook.userProgress.toUpload = true
         audiobook.userProgress.libraryItemId = audiobook.id
-        
+
         scope.launch(Dispatchers.IO) {
             try {
                 db.libraryItemDao().insertLibraryItem(audiobook)
-                
-                // Attempt immediate sync based on conditions
-                val shouldAttemptSync = when {
-                    !isPeriodicSave -> true // Always try for manual saves
-                    networkConnectivityManager.isNetworkAvailable() -> true // Try if online
-                    else -> false // Skip for periodic saves when offline
-                }
-                
-                if (shouldAttemptSync) {
+
+                // Skip the network round-trip entirely when we're offline — manual saves
+                // used to always attempt this and burn a full retry-with-backoff cycle
+                // (up to ~3 timed-out requests) on a doomed call. It's saved locally with
+                // toUpload=true regardless, and syncPendingProgress() picks it up once
+                // connectivity returns.
+                if (networkConnectivityManager.isNetworkAvailable()) {
                     val success = ApiHandler(this@PlayerService).updateProgress(audiobook.userProgress)
                     if (success) {
                         Timber.d("Progress synced successfully")
-                    } else if (!isPeriodicSave) {
+                    } else {
                         Timber.d("Progress sync failed, will retry when connectivity is restored")
                     }
                 } else {
-                    Timber.d("Skipping sync attempt - offline periodic save")
+                    Timber.d("Skipping sync attempt - offline")
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error saving progress")
