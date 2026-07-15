@@ -40,14 +40,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.Timer
-import java.util.TimerTask
 import kotlin.math.abs
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 
 class PlayerService : MediaSessionService() {
@@ -74,7 +71,7 @@ class PlayerService : MediaSessionService() {
     private lateinit var userDataManager: UserDataManager
 
     // New fields for periodic progress saving and network monitoring
-    private var progressSaveTimer: Timer? = null
+    private var progressSaveJob: Job? = null
     private val PROGRESS_SAVE_INTERVAL = 30000L // 30 seconds
     private lateinit var networkConnectivityManager: NetworkConnectivityManager
     private var lastSavedPosition: Double = 0.0
@@ -125,8 +122,17 @@ class PlayerService : MediaSessionService() {
         mNotificationManager.createNotificationChannel(mChannel)
     }
 
+    // onPlayWhenReadyChanged and onPlaybackStateChanged both call this, and a single
+    // buffering blip can flip the player listener several times in a row — only
+    // rebuild the notification when whether we're actually playing has changed.
+    private var lastNotifiedIsPlaying: Boolean? = null
+
     private fun generateOngoingActivityNotification() {
-        if (!exoPlayer.isPlaying) {
+        val isPlaying = exoPlayer.isPlaying
+        if (lastNotifiedIsPlaying == isPlaying) return
+        lastNotifiedIsPlaying = isPlaying
+
+        if (!isPlaying) {
             notificationManager.cancel(ONGOING_NOTIFICATION_ID)
             return
         }
@@ -335,33 +341,31 @@ class PlayerService : MediaSessionService() {
 
     // New method: Start periodic saving
     private fun startPeriodicProgressSaving() {
-        stopPeriodicProgressSaving() // Prevent duplicate timers
-        
-        progressSaveTimer = Timer("ProgressSaveTimer", true).apply {
-            schedule(object : TimerTask() {
-                override fun run() {
-                    // Switch to the main thread to access ExoPlayer
-                    scope.launch(Dispatchers.Main) {
-                        if (exoPlayer.isPlaying) {
-                            val currentPosition = getCurrentTotalPositionInS()
-                            // Only save if position changed significantly (avoid unnecessary writes)
-                            if (abs(currentPosition - lastSavedPosition) > 5.0) { // 5 second threshold
-                                // saveProgress handles DB/network ops using Dispatchers.IO
-                                saveProgress(isPeriodicSave = true)
-                                lastSavedPosition = currentPosition
-                            }
+        stopPeriodicProgressSaving() // Prevent duplicate jobs
+
+        progressSaveJob = scope.launch {
+            while (isActive) {
+                delay(PROGRESS_SAVE_INTERVAL)
+                withContext(Dispatchers.Main) {
+                    if (exoPlayer.isPlaying) {
+                        val currentPosition = getCurrentTotalPositionInS()
+                        // Only save if position changed significantly (avoid unnecessary writes)
+                        if (abs(currentPosition - lastSavedPosition) > 5.0) { // 5 second threshold
+                            // saveProgress handles DB/network ops using Dispatchers.IO
+                            saveProgress(isPeriodicSave = true)
+                            lastSavedPosition = currentPosition
                         }
                     }
                 }
-            }, PROGRESS_SAVE_INTERVAL, PROGRESS_SAVE_INTERVAL)
+            }
         }
         Timber.d("Started periodic progress saving")
     }
 
     // New method: Stop periodic saving
     private fun stopPeriodicProgressSaving() {
-        progressSaveTimer?.cancel()
-        progressSaveTimer = null
+        progressSaveJob?.cancel()
+        progressSaveJob = null
         Timber.d("Stopped periodic progress saving")
     }
 
