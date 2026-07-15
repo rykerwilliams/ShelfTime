@@ -11,6 +11,7 @@ import android.os.IBinder
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -218,7 +219,11 @@ class PlayerService : MediaSessionService() {
 
     @UnstableApi
     private fun createPlayer() {
-        exoPlayer = ExoPlayer.Builder(this).build()
+        // Without an explicit wake mode, ExoPlayer holds no CPU/Wi-Fi lock at all, and
+        // Wear OS suspends both aggressively once the screen sleeps — which stalls
+        // playback (decoding a local file still needs the CPU awake; a still-downloading
+        // or server-streamed track also needs Wi-Fi).
+        exoPlayer = ExoPlayer.Builder(this).setWakeMode(C.WAKE_MODE_NETWORK).build()
 
         exoPlayer.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
