@@ -219,11 +219,14 @@ class PlayerService : MediaSessionService() {
 
     @UnstableApi
     private fun createPlayer() {
-        // Without an explicit wake mode, ExoPlayer holds no CPU/Wi-Fi lock at all, and
-        // Wear OS suspends both aggressively once the screen sleeps — which stalls
-        // playback (decoding a local file still needs the CPU awake; a still-downloading
-        // or server-streamed track also needs Wi-Fi).
-        exoPlayer = ExoPlayer.Builder(this).setWakeMode(C.WAKE_MODE_NETWORK).build()
+        // Without an explicit wake mode, ExoPlayer holds no CPU lock at all, and Wear OS
+        // suspends the CPU aggressively once the screen sleeps — which stalls the
+        // decode/render loop outright, even for fully downloaded/cached playback that
+        // never touches the network. LOCAL (not NETWORK) on purpose: a Wi-Fi lock would
+        // also hold the radio at full power for playback that's reading purely from the
+        // local download cache, which is the common case here and not worth the battery
+        // cost just to cover the rarer still-streaming-a-non-downloaded-track case.
+        exoPlayer = ExoPlayer.Builder(this).setWakeMode(C.WAKE_MODE_LOCAL).build()
 
         exoPlayer.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
