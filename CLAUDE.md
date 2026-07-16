@@ -89,22 +89,26 @@ is feasible.
   playback doesn't need), added the sideloadable config file
   (`shelftime-config.json` in the app's external files dir, see `SIDELOADING.md`).
 
-## In progress as of the last pause (not yet merged to `main`)
-
-On branch `claude/upstream-issues-review-q3sdj1`:
-- Fixed a real slow-playback-start bug: `setAudiobook()` called
+- **v1.16** — fixed a real slow-playback-start bug: `setAudiobook()` called
   `track.isDownloaded(this)` in the per-track loop purely to print an unused debug
   log line — that function runs a SQLite query against the Media3 download index, so
   this was N synchronous main-thread queries before playback could even begin.
   Extracted the media-source-building logic into `PlayerMediaSourceBuilder` (no
-  Context dependency, so the regression can't quietly come back) and added
-  `PlayerMediaSourceBuilderTest` (instrumented) covering it.
-- Added `FileLoggingTree` (persists Timber logs to the app's external files dir with
-  size-based rotation) and `PerformanceLogger` (battery/memory snapshots tagged to
-  playback start/stop and download Wi-Fi-lock acquire/release) — for pulling
-  real usage data off the watch via `adb pull` instead of needing a live
-  `adb logcat` session. Documented in `SIDELOADING.md` under "Pulling performance
-  logs".
-- Next steps once resumed: verify CI green on this branch, merge to `main`, decide on
-  a version bump (currently `1.15` — this is fix/instrumentation work, no user-facing
-  feature, so `1.16` patch bump is probably right), dispatch `release.yml`.
+  Context dependency, so the regression can't quietly come back) with
+  `PlayerMediaSourceBuilderTest` (instrumented) covering it — first time a fix in
+  this fork shipped with a test proving the seam it touched, rather than
+  code-reading confidence alone. Also added `FileLoggingTree` (persists Timber logs
+  to the app's external files dir with size-based rotation) and `PerformanceLogger`
+  (battery/memory snapshots tagged to playback start/stop and download
+  Wi-Fi-lock acquire/release), so a normal day of watch use can be pulled via
+  `adb pull` afterward instead of needing a live `adb logcat` session — see
+  `SIDELOADING.md` under "Pulling performance logs".
+
+## Testing note from the v1.16 fix
+
+CI caught a real compile error on the first push of the `PlayerMediaSourceBuilder`
+extraction (`artist`/`title` params declared as non-null `String` when
+`LibraryItem.media.metadata.authorName`/`.title` are actually `String?`) — exactly
+the kind of thing the testing-philosophy change above is meant to catch before
+`main`. Worth remembering next time a change "obviously" compiles: it doesn't,
+until CI says so.
