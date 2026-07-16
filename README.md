@@ -3,6 +3,7 @@
 ![banner](https://github.com/mkaflowski/Audiobookshelf-WearOS/blob/main/raw/banner%20small.jpg?raw=true)
 
 [![Build Debug APK](https://github.com/rykerwilliams/ShelfTime/actions/workflows/build-apk.yml/badge.svg)](https://github.com/rykerwilliams/ShelfTime/actions/workflows/build-apk.yml)
+[![Latest Release](https://img.shields.io/github/v/release/rykerwilliams/ShelfTime)](https://github.com/rykerwilliams/ShelfTime/releases/latest)
 
 [Audiobookshelf](https://github.com/advplyr/audiobookshelf) for Android WearOS.
 
@@ -12,7 +13,7 @@
 
 This is a fork of [mkaflowski/ShelfTime](https://github.com/mkaflowski/ShelfTime), a standalone Wear OS client for Audiobookshelf. The original maintainer hasn't merged a PR or pushed a commit since September 2025, so several long-open community fixes and feature requests were sitting unreviewed. This fork picks those up and continues active development.
 
-**This build is not published on the Play Store.** Install it by sideloading — see [SIDELOADING.md](SIDELOADING.md) for step-by-step instructions (grab a prebuilt APK from this repo's [GitHub Actions](https://github.com/rykerwilliams/ShelfTime/actions) or build it yourself).
+**This build is not published on the Play Store.** Install it by sideloading — grab the latest APK from [Releases](https://github.com/rykerwilliams/ShelfTime/releases), then see [SIDELOADING.md](SIDELOADING.md) for step-by-step install instructions (building from source or grabbing an unreleased branch's debug build from [GitHub Actions](https://github.com/rykerwilliams/ShelfTime/actions) both work too).
 
 The original project's README is preserved at [README.original.md](README.original.md) for reference.
 
