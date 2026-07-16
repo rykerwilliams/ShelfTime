@@ -21,8 +21,8 @@ object PlayerMediaSourceBuilder {
     fun buildSources(
         tracks: List<Track>,
         baseUrl: String,
-        artist: String,
-        title: String,
+        artist: String?,
+        title: String?,
         cacheDataSourceFactory: DataSource.Factory
     ): List<MediaSource> {
         return tracks.map { track ->
