@@ -17,6 +17,17 @@ class MainApp : Application() {
         if (BuildConfig.DEBUG) {
             Timber.plant(LineNumberDebugTree())
             Timber.plant(FileLoggingTree(this))
+
+            // Crashlytics can't be relied on here — sideloaded builds ship with a
+            // dummy google-services.json when no real one is configured, so crash
+            // reports have nowhere real to go. Capture the crash to our own log file
+            // before the process dies, then hand off to whatever handler was already
+            // registered (Crashlytics' own, if present) so nothing else changes.
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                Timber.e(throwable, "FATAL: uncaught exception on thread ${thread.name}")
+                previousHandler?.uncaughtException(thread, throwable)
+            }
         }
         PerformanceLogger.logSnapshot(this, "app_start")
 

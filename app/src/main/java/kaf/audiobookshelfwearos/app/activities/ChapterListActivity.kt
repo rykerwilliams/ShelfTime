@@ -78,6 +78,7 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -237,6 +238,9 @@ class ChapterListActivity : ComponentActivity() {
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                // Normal — this fires every time the screen is left while collecting.
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error collecting download progress")
             }

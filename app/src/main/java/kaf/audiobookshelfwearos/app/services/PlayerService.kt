@@ -34,6 +34,7 @@ import kaf.audiobookshelfwearos.app.data.room.AppDatabase
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -330,6 +331,10 @@ class PlayerService : MediaSessionService() {
                 } else {
                     Timber.d("Skipping sync attempt - offline")
                 }
+            } catch (e: CancellationException) {
+                // Normal — fires when the service's job is cancelled (e.g. onDestroy)
+                // while a save is in flight.
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Error saving progress")
             }
