@@ -29,6 +29,11 @@ render.experimental.xml
 # Keystore files
 *.jks
 *.keystore
+# Except the shared debug-signing key -- intentionally committed so every debug
+# build (local or CI) signs with the same key and can be installed as an update
+# over the last one instead of hitting "signatures do not match". Never do this
+# for a release keystore.
+!app/debug.keystore
 
 # Google Services (e.g. APIs or Firebase)
 google-services.json
