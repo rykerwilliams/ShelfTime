@@ -26,6 +26,7 @@ import kaf.audiobookshelfwearos.R
 import kaf.audiobookshelfwearos.app.data.DownloadProgress
 import kaf.audiobookshelfwearos.app.data.DownloadState
 import kaf.audiobookshelfwearos.app.data.Track
+import kaf.audiobookshelfwearos.app.data.TrackDownloadStatus
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
@@ -318,6 +319,16 @@ class MyDownloadService : DownloadService(
         fun getDownloadProgress(context: Context, trackId: String): DownloadProgress? {
             val download = getDownloadManager(context).downloadIndex.getDownload(trackId) ?: return null
             return calculateProgress(download)
+        }
+
+        // Single downloadIndex.getDownload() read, mapped once to the two booleans
+        // callers need (isDownloaded/isDownloading). Callers that used to call
+        // Track.isDownloaded(context) and Track.isDownloading(context) separately
+        // were issuing two SQLite reads for the same row; this does one.
+        fun getDownloadStatus(context: Context, trackId: String): TrackDownloadStatus {
+            val download = getDownloadManager(context).downloadIndex.getDownload(trackId)
+            val state = download?.let { mapDownloadState(it.state) }
+            return TrackDownloadStatus.fromState(state)
         }
 
         private fun calculateProgress(download: Download): DownloadProgress {

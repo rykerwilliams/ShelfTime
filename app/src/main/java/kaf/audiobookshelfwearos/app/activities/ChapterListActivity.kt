@@ -78,8 +78,10 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.math.floor
 
@@ -225,16 +227,19 @@ class ChapterListActivity : ComponentActivity() {
                             Timber.d("Updated audiobook progress: ${audiobookProgress?.overallProgress}%")
                         }
                         
-                        // Update download states
-                        downloadedCount = libraryItem.media.tracks.count { track -> 
-                            track.isDownloaded(this@ChapterListActivity) 
+                        // Update download states: one downloadIndex.getDownload() read per
+                        // track (was up to three separate track.isDownloaded()/
+                        // isDownloading() scans above, each issuing its own SQLite lookup
+                        // for the same row), dispatched off the main thread since this is
+                        // synchronous disk I/O running inside a Compose collect callback.
+                        val statuses = withContext(Dispatchers.IO) {
+                            libraryItem.media.tracks.map { track ->
+                                MyDownloadService.getDownloadStatus(this@ChapterListActivity, track.id)
+                            }
                         }
-                        isDownloading = libraryItem.media.tracks.any { track ->
-                            track.isDownloading(this@ChapterListActivity)
-                        }
-                        isDownloaded = libraryItem.media.tracks.all { track -> 
-                            track.isDownloaded(this@ChapterListActivity) 
-                        }
+                        downloadedCount = statuses.count { it.isDownloaded }
+                        isDownloading = statuses.any { it.isDownloading }
+                        isDownloaded = statuses.all { it.isDownloaded }
                     }
                 }
             } catch (e: Exception) {

@@ -59,6 +59,7 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.TimeText
 import androidx.wear.tooling.preview.devices.WearDevices
 import kaf.audiobookshelfwearos.app.services.PlayerService
+import kaf.audiobookshelfwearos.app.utils.PlayerBroadcastActions
 import kotlinx.coroutines.delay
 import timber.log.Timber
 import kotlin.math.roundToInt
@@ -110,6 +111,15 @@ class PlayerActivity : ComponentActivity() {
                         currentPosition = playerService?.getCurrentPosition() ?: 0L
                         playerService?.getDuration()?.let {
                             if (it > 0) duration = it
+                        }
+                        // Backlog item 4: recompute the chapter title every tick of
+                        // this existing poll loop, not just from the discrete
+                        // UPDATE_METADATA broadcast -- for a single-file audiobook
+                        // with embedded chapters, PlayerService's listener callbacks
+                        // that drive that broadcast never fire again mid-book, which
+                        // otherwise froze the title after the first chapter.
+                        playerService?.getCurrentChapterTitle()?.let {
+                            chapterTitle = it
                         }
                     }
                     delay(1000)
@@ -245,22 +255,22 @@ class PlayerActivity : ComponentActivity() {
             val playerReceiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     when (intent?.action) {
-                        "$packageName.ACTION_PLAYING" -> {
+                        "$packageName.${PlayerBroadcastActions.PLAYING}" -> {
                             isPlaying = true // Update the UI state
                             isBuffering = false
                         }
 
-                        "$packageName.ACTION_BUFFERING" -> {
+                        "$packageName.${PlayerBroadcastActions.BUFFERING}" -> {
                             isPlaying = false
                             isBuffering = true
                         }
 
-                        "$packageName.ACTION_PAUSED" -> {
+                        "$packageName.${PlayerBroadcastActions.PAUSED}" -> {
                             isPlaying = false // Update the UI state
                             isBuffering = false
                         }
 
-                        "$packageName.ACTION_UPDATE_METADATA" -> {
+                        "$packageName.${PlayerBroadcastActions.UPDATE_METADATA}" -> {
                             intent.getStringExtra("CHAPTER_TITLE")?.let {
                                 chapterTitle = it
                                 Timber.d("chapterTitle = %s", chapterTitle)
@@ -270,10 +280,10 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
             val filter = IntentFilter().apply {
-                addAction("$packageName.ACTION_BUFFERING")
-                addAction("$packageName.ACTION_PLAYING")
-                addAction("$packageName.ACTION_PAUSED")
-                addAction("$packageName.ACTION_UPDATE_METADATA")
+                addAction("$packageName.${PlayerBroadcastActions.BUFFERING}")
+                addAction("$packageName.${PlayerBroadcastActions.PLAYING}")
+                addAction("$packageName.${PlayerBroadcastActions.PAUSED}")
+                addAction("$packageName.${PlayerBroadcastActions.UPDATE_METADATA}")
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 this@PlayerActivity.registerReceiver(playerReceiver, filter, RECEIVER_EXPORTED)

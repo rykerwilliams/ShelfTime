@@ -28,12 +28,14 @@ import kaf.audiobookshelfwearos.R
 import kaf.audiobookshelfwearos.app.ApiHandler
 import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.activities.PlayerActivity
-import kaf.audiobookshelfwearos.app.data.Chapter
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.room.AppDatabase
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.ChapterResolver
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
+import kaf.audiobookshelfwearos.app.utils.PlayerBroadcastActions
+import kaf.audiobookshelfwearos.app.utils.TrackPositionResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,6 +63,7 @@ class PlayerService : MediaSessionService() {
     private var totalPlaybackTime: Long = 0
     private var pausedAtMs: Long = 0L
     private val REWIND_ON_RESUME_MS = 3000L
+    private val SKIP_SECONDS = 10.0
     private val MIN_PAUSE_DURATION_TO_REWIND_MS = 3000L
     private var ONGOING_NOTIFICATION_ID: Int = 151
     private var CHANNEL_NAME: String = "Player"
@@ -252,7 +255,7 @@ class PlayerService : MediaSessionService() {
                         Timber
                             .d("ExoPlayer is buffering")
 
-                        val intent = Intent("$packageName.ACTION_BUFFERING")
+                        val intent = Intent("$packageName.${PlayerBroadcastActions.BUFFERING}")
                         sendBroadcast(intent)
                     }
 
@@ -285,13 +288,13 @@ class PlayerService : MediaSessionService() {
                     }
                     playbackStartTime = System.currentTimeMillis()
                     startPeriodicProgressSaving()
-                    sendBroadcast(Intent("$packageName.ACTION_PLAYING"))
+                    sendBroadcast(Intent("$packageName.${PlayerBroadcastActions.PLAYING}"))
                 } else {
                     Timber.tag("PlayerService").d("ExoPlayer is paused")
                     pausedAtMs = System.currentTimeMillis()
                     stopPeriodicProgressSaving()
                     saveProgress() // Final save on pause
-                    sendBroadcast(Intent("$packageName.ACTION_PAUSE"))
+                    sendBroadcast(Intent("$packageName.${PlayerBroadcastActions.PAUSED}"))
                     val currentTime = System.currentTimeMillis()
                     totalPlaybackTime += currentTime - playbackStartTime
                     Timber.tag("PlayerService")
@@ -310,6 +313,9 @@ class PlayerService : MediaSessionService() {
         audiobook.userProgress.currentTime = currentPosition
         audiobook.userProgress.toUpload = true
         audiobook.userProgress.libraryItemId = audiobook.id
+        // Server-side auto-finish relies on this being non-zero; the PATCH omits it
+        // otherwise and the server's MediaProgress.duration stays 0 forever.
+        audiobook.userProgress.duration = audiobook.media.duration
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -321,7 +327,15 @@ class PlayerService : MediaSessionService() {
                 // toUpload=true regardless, and syncPendingProgress() picks it up once
                 // connectivity returns.
                 if (networkConnectivityManager.isNetworkAvailable()) {
-                    val success = ApiHandler(this@PlayerService).updateProgress(audiobook.userProgress)
+                    // isPeriodicActiveSave=isPeriodicSave: during active playback this
+                    // device is definitionally the newest-progress source, so skip the
+                    // pre-upload getMediaProgress() GET on this hot ~30s call site (see
+                    // ProgressSyncPolicy). The final on-pause save (isPeriodicSave=false)
+                    // still gets the check.
+                    val success = ApiHandler(this@PlayerService).updateProgress(
+                        audiobook.userProgress,
+                        isPeriodicActiveSave = isPeriodicSave
+                    )
                     if (success) {
                         Timber.d("Progress synced successfully")
                     } else {
@@ -397,24 +411,29 @@ class PlayerService : MediaSessionService() {
 
     fun updateUIMetadata() {
         if (exoPlayer.playbackState == Player.STATE_BUFFERING) {
-            val intent = Intent("$packageName.ACTION_BUFFERING")
+            val intent = Intent("$packageName.${PlayerBroadcastActions.BUFFERING}")
             sendBroadcast(intent)
         }
 
-        val timeInS = getCurrentTotalPositionInS() + START_OFFSET_SECONDS + 1
-
-        var currentChapter = Chapter()
-        for (chapter in audiobook.media.chapters) {
-            if (timeInS >= chapter.start && timeInS < chapter.end)
-                currentChapter = chapter
-        }
-
-        val intent = Intent("$packageName.ACTION_UPDATE_METADATA").apply {
-            putExtra("CHAPTER_TITLE", currentChapter.title)
+        val intent = Intent("$packageName.${PlayerBroadcastActions.UPDATE_METADATA}").apply {
+            putExtra("CHAPTER_TITLE", getCurrentChapterTitle())
         }
         sendBroadcast(intent)
         if (exoPlayer.isPlaying)
-            sendBroadcast(Intent("$packageName.ACTION_PLAYING"))
+            sendBroadcast(Intent("$packageName.${PlayerBroadcastActions.PLAYING}"))
+    }
+
+    // Backlog item 4: chapter title was previously only recomputed from the discrete
+    // ExoPlayer listener callbacks (onMediaItemTransition/onMediaMetadataChanged/first
+    // STATE_READY) that drive updateUIMetadata() above, which never fire again mid-book
+    // for a single-file (e.g. M4B) audiobook with embedded chapters -- freezing the
+    // title after the first chapter. Exposing this getter lets PlayerActivity's
+    // existing per-second position poll loop (repeatOnLifecycle(STARTED)) recompute the
+    // title every tick instead, with no new timer. The actual position -> title lookup
+    // is the pure, unit-tested ChapterResolver.currentChapterTitle().
+    fun getCurrentChapterTitle(): String {
+        val timeInS = getCurrentTotalPositionInS() + START_OFFSET_SECONDS + 1
+        return ChapterResolver.currentChapterTitle(timeInS, audiobook.media.chapters)
     }
 
     private fun getCurrentTotalPositionInS(): Double {
@@ -422,6 +441,25 @@ class PlayerService : MediaSessionService() {
             return 0.0
         val track = audiobook.media.tracks[exoPlayer.currentMediaItemIndex]
         return track.startOffset + exoPlayer.currentPosition / 1000
+    }
+
+    // Seeks by deltaSeconds (positive = fast-forward, negative = rewind) relative to
+    // the current absolute position, resolving the target across track boundaries via
+    // TrackPositionResolver instead of Player.seekTo(long)'s single-argument overload,
+    // which only seeks within the current MediaItem and silently clamps/truncates a
+    // skip that would land in the adjacent track (backlog item 7).
+    private fun seekRelativeSeconds(deltaSeconds: Double) {
+        if (audiobook.media.tracks.isEmpty()) {
+            // No track metadata resolved yet — fall back to a plain in-item seek.
+            exoPlayer.seekTo((exoPlayer.currentPosition + (deltaSeconds * 1000).toLong()).coerceAtLeast(0))
+            return
+        }
+        val targetPosition = (getCurrentTotalPositionInS() + deltaSeconds).coerceAtLeast(0.0)
+        val trackPosition = TrackPositionResolver.resolve(audiobook.media.tracks, targetPosition)
+        exoPlayer.seekTo(
+            trackPosition.trackIndex,
+            (trackPosition.trackLocalOffsetSeconds * 1000).toLong().coerceAtLeast(0L)
+        )
     }
 
     // The user dismissed the app from the recent tasks
@@ -448,16 +486,9 @@ class PlayerService : MediaSessionService() {
         exoPlayer.clearMediaItems()
 
         //getting chapter by time
-        var totalDuration = 0.0
-        var trackIndex = 0
-        for (track in audiobook.media.tracks) {
-            totalDuration += track.duration
-            if (totalDuration > userTotalTime)
-                break
-            trackIndex++
-        }
-
-        val userTrackTime = userTotalTime - audiobook.media.tracks[trackIndex].startOffset
+        val trackPosition = TrackPositionResolver.resolve(audiobook.media.tracks, userTotalTime)
+        val trackIndex = trackPosition.trackIndex
+        val userTrackTime = trackPosition.trackLocalOffsetSeconds
 
         val headers = hashMapOf<String, String>()
         headers["Authorization"] = "Bearer " + userDataManager.token;
@@ -511,11 +542,11 @@ class PlayerService : MediaSessionService() {
             }
 
             "ACTION_REWIND" -> {
-                exoPlayer.seekTo(exoPlayer.currentPosition - 10000) // Rewind 10 seconds
+                seekRelativeSeconds(-SKIP_SECONDS) // Rewind 10 seconds, crossing track boundaries
             }
 
             "ACTION_FAST_FORWARD" -> {
-                exoPlayer.seekTo(exoPlayer.currentPosition + 10000) // Fast forward 10 seconds
+                seekRelativeSeconds(SKIP_SECONDS) // Fast forward 10 seconds, crossing track boundaries
             }
         }
 
