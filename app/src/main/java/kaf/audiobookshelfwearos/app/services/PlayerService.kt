@@ -93,8 +93,20 @@ class PlayerService : MediaSessionService() {
         userDataManager = UserDataManager(this)
         createChannel(this)
         notificationManager = NotificationManagerCompat.from(applicationContext)
+
+        // Both PlayerActivity and the companion setAudiobook() start this service via
+        // Context.startForegroundService(), which requires Service.startForeground()
+        // to be called shortly after onCreate() begins or the system kills the process
+        // with ForegroundServiceDidNotStartInTimeException. This was never being called
+        // at all -- must happen before the slower setup below (DB access, ExoPlayer and
+        // MediaSession construction), since that's exactly the kind of work that can
+        // occasionally push past the deadline and cause the crash intermittently rather
+        // than every time. generateOngoingActivityNotification() continues to update
+        // this same notification ID once real playback state is known.
+        startForeground(ONGOING_NOTIFICATION_ID, buildStartingNotification())
+
         db = (applicationContext as MainApp).database
-        
+
         // Initialize network connectivity monitoring
         networkConnectivityManager = NetworkConnectivityManager(this) {
             scope.launch { // Ensure syncPendingProgress is launched in a coroutine
@@ -122,6 +134,21 @@ class PlayerService : MediaSessionService() {
         mChannel.setShowBadge(true)
         mChannel.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         mNotificationManager.createNotificationChannel(mChannel)
+    }
+
+    // Minimal notification passed to startForeground() in onCreate(), before ExoPlayer
+    // playback state exists to build the real "Playing" notification from. Same
+    // notification ID as generateOngoingActivityNotification(), so that function's
+    // later notify() calls replace this one in place rather than creating a second
+    // notification.
+    private fun buildStartingNotification(): Notification {
+        return NotificationCompat.Builder(applicationContext, CHANNEL_NAME)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText("Starting playback…")
+            .setSmallIcon(R.drawable.notification)
+            .setCategory(NotificationCompat.CATEGORY_WORKOUT)
+            .setOngoing(true)
+            .build()
     }
 
     // onPlayWhenReadyChanged and onPlaybackStateChanged both call this, and a single
