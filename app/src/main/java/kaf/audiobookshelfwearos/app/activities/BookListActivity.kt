@@ -507,6 +507,11 @@ class BookListActivity : ComponentActivity() {
         var isDownloaded by remember(item.id) {
             mutableStateOf(item.isDownloaded(this))
         }
+        // Guards the download branch below against repeat taps while a request is
+        // already in flight (resolveItemWithTracks()'s network fetch can take a few
+        // seconds, and the row stays revealed/tappable the whole time with no other
+        // visual change to show a tap already registered).
+        var isRequestingDownload by remember(item.id) { mutableStateOf(false) }
         val revealState = rememberRevealState()
         val coroutineScope = rememberCoroutineScope()
 
@@ -528,25 +533,35 @@ class BookListActivity : ComponentActivity() {
                 isDownloaded = false
                 // Keep the row revealed so the undoPrimaryAction slot (below) shows.
                 coroutineScope.launch { revealState.animateTo(RevealValue.RightRevealed) }
-            } else {
+            } else if (!isRequestingDownload) {
+                isRequestingDownload = true
                 // See resolveItemWithTracks() -- a never-locally-touched book's main-list
                 // item can have an empty media.tracks, which silently no-ops
                 // downloadItem() (an empty for-loop, no error) instead of actually
                 // starting anything. Fetch full track data first when needed.
                 coroutineScope.launch {
-                    val fullItem = resolveItemWithTracks(item)
-                    if (fullItem == null) {
-                        Toast.makeText(
-                            this@BookListActivity,
-                            "Couldn't start download -- try opening the book first",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    } else {
-                        downloadItem(fullItem)
+                    try {
+                        val fullItem = resolveItemWithTracks(item)
+                        if (fullItem == null) {
+                            Toast.makeText(
+                                this@BookListActivity,
+                                "Couldn't start download -- try opening the book first",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            downloadItem(fullItem)
+                            Toast.makeText(
+                                this@BookListActivity,
+                                "Download started",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    } finally {
+                        isRequestingDownload = false
+                        // No undo affordance for starting a download -- close the row
+                        // back up either way.
+                        revealState.animateTo(RevealValue.Covered)
                     }
-                    // No undo affordance for starting a download -- close the row back up
-                    // either way.
-                    revealState.animateTo(RevealValue.Covered)
                 }
             }
         }
