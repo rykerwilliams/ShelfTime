@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -534,10 +533,13 @@ class BookListActivity : ComponentActivity() {
         // seconds, and the row stays revealed/tappable the whole time with no other
         // visual change to show a tap already registered).
         var isRequestingDownload by remember(item.id) { mutableStateOf(false) }
-        // Percent (0-100) and bytes/sec, shown as a mini progress bar + speed label
-        // in the primary action while isDownloading -- see the poll loop below.
+        // Percent (0-100), downloaded/total bytes, and bytes/sec -- shown as a
+        // full-button fill + text in the primary action while isDownloading, see
+        // the poll loop below.
         var downloadProgressPercent by remember(item.id) { mutableFloatStateOf(0f) }
         var downloadSpeedBytesPerSecond by remember(item.id) { mutableLongStateOf(0L) }
+        var downloadedBytes by remember(item.id) { mutableLongStateOf(0L) }
+        var downloadTotalBytes by remember(item.id) { mutableLongStateOf(0L) }
         val revealState = rememberRevealState()
         val coroutineScope = rememberCoroutineScope()
 
@@ -572,6 +574,8 @@ class BookListActivity : ComponentActivity() {
                     val aggregate = AudiobookProgressCalculator.calculateAudiobookProgress(effectiveItem, progresses)
                     downloadProgressPercent = aggregate.overallProgress
                     downloadSpeedBytesPerSecond = aggregate.averageDownloadSpeed
+                    downloadedBytes = aggregate.totalBytesDownloaded
+                    downloadTotalBytes = aggregate.totalBytes
                 }
                 delay(2000L)
             }
@@ -708,30 +712,40 @@ class BookListActivity : ComponentActivity() {
                     onClick = onPrimaryAction,
                     icon = {
                         if (isDownloading) {
-                            // Orange track, green fill growing left-to-right with
-                            // progress -- same green/orange as the row's own
-                            // Download/Cancel colors above, so the bar reads as
-                            // "how much of Cancel's amber has turned into done".
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            // The action's own background (from `colors` above) is
+                            // already amber -- fill the *entire* button with green
+                            // from the left, growing with progress, rather than a
+                            // small separate bar, so the whole amber area turns
+                            // green as the download completes. label is hidden
+                            // below while downloading so this claims the full area
+                            // instead of sharing it.
+                            Box(modifier = Modifier.fillMaxSize()) {
                                 Box(
                                     modifier = Modifier
-                                        .width(36.dp)
-                                        .height(6.dp)
-                                        .background(Color(0xFFB8860B), RoundedCornerShape(3.dp))
+                                        .align(Alignment.CenterStart)
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(fraction = (downloadProgressPercent / 100f).coerceIn(0f, 1f))
+                                        .background(Color(0xFF086409))
+                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.align(Alignment.Center)
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(fraction = (downloadProgressPercent / 100f).coerceIn(0f, 1f))
-                                            .fillMaxHeight()
-                                            .background(Color(0xFF086409), RoundedCornerShape(3.dp))
-                                    )
-                                }
-                                if (downloadSpeedBytesPerSecond > 0) {
-                                    Text(
-                                        text = "${DownloadProgressCalculator.formatBytes(downloadSpeedBytesPerSecond)}/s",
-                                        fontSize = 7.sp,
-                                        color = Color.White
-                                    )
+                                    if (downloadTotalBytes > 0) {
+                                        Text(
+                                            text = "${DownloadProgressCalculator.formatBytes(downloadedBytes)} / " +
+                                                DownloadProgressCalculator.formatBytes(downloadTotalBytes),
+                                            fontSize = 14.sp,
+                                            color = Color.White
+                                        )
+                                    }
+                                    if (downloadSpeedBytesPerSecond > 0) {
+                                        Text(
+                                            text = "${DownloadProgressCalculator.formatBytes(downloadSpeedBytesPerSecond)}/s",
+                                            fontSize = 14.sp,
+                                            color = Color.White
+                                        )
+                                    }
                                 }
                             }
                         } else {
@@ -742,13 +756,12 @@ class BookListActivity : ComponentActivity() {
                         }
                     },
                     label = {
-                        Text(
-                            when {
-                                isDownloaded -> "Delete"
-                                isDownloading -> "Cancel"
-                                else -> "Download"
-                            }
-                        )
+                        // Hidden while downloading so the icon slot's fill+text
+                        // (above) can claim the entire button instead of sharing
+                        // it with a label.
+                        if (!isDownloading) {
+                            Text(if (isDownloaded) "Delete" else "Download")
+                        }
                     }
                 )
             },
