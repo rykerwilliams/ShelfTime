@@ -768,7 +768,11 @@ class BookListActivity : ComponentActivity() {
             Column(modifier = Modifier
                 .fillMaxWidth()
                 .clickable {
-                    if (BookTapRouter.shouldJumpStraightToPlayback(PlayerService.currentlyPlayingItemId)) {
+                    if (BookTapRouter.shouldJumpStraightToPlayback(
+                            PlayerService.currentlyPlayingItemId,
+                            UserDataManager(this@BookListActivity).tapToPlayEnabled
+                        )
+                    ) {
                         // Nothing is currently playing: skip the chapter/detail screen and
                         // jump straight into playback for the tapped book.
                         //

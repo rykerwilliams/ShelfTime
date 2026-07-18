@@ -40,6 +40,7 @@ class SettingsActivity : ComponentActivity() {
         var bezelModeIndex by remember {
             mutableStateOf(BEZEL_MODES.indexOf(userDataManager.bezelMode).let { if (it < 0) 0 else it })
         }
+        var tapToPlayEnabled by remember { mutableStateOf(userDataManager.tapToPlayEnabled) }
 
         ScalingLazyColumn(
             state = listState,
@@ -179,6 +180,26 @@ class SettingsActivity : ComponentActivity() {
                 ) {
                     Text(BEZEL_MODES[bezelModeIndex])
                 }
+            }
+
+            item {
+                ToggleChip(
+                    checked = tapToPlayEnabled,
+                    onCheckedChange = { enabled ->
+                        tapToPlayEnabled = enabled
+                        userDataManager.tapToPlayEnabled = enabled
+                    },
+                    label = {
+                        Text("Tap Book to Play")
+                    },
+                    toggleControl = {
+                        Switch(
+                            checked = tapToPlayEnabled,
+                            onCheckedChange = null
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             item {

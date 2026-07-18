@@ -23,6 +23,7 @@ class UserDataManager(context: Context) {
         private const val KEY_JUMP_BACKWARD_SECONDS = "jump_backward_seconds"
         private const val KEY_JUMP_FORWARD_SECONDS = "jump_forward_seconds"
         private const val KEY_BEZEL_MODE = "bezel_mode"
+        private const val KEY_TAP_TO_PLAY_ENABLED = "tap_to_play_enabled"
 
         // ~2GB default byte budget for Smart Delete (see §8, UI_CHANGES_PLAN.md).
         private const val DEFAULT_SMART_DELETE_MAX_BYTES = 2_000_000_000L
@@ -95,6 +96,12 @@ class UserDataManager(context: Context) {
     var bezelMode: String
         get() = sharedPreferences.getString(KEY_BEZEL_MODE, null) ?: "Scrub"
         set(value) = sharedPreferences.edit().putString(KEY_BEZEL_MODE, value).apply()
+
+    // Default true: preserves the existing "tap a book to jump straight into
+    // playback when nothing's playing" behavior for anyone upgrading.
+    var tapToPlayEnabled: Boolean
+        get() = sharedPreferences.getBoolean(KEY_TAP_TO_PLAY_ENABLED, true)
+        set(value) = sharedPreferences.edit().putBoolean(KEY_TAP_TO_PLAY_ENABLED, value).apply()
 
     fun clearUserData() {
         sharedPreferences.edit().clear().apply()
