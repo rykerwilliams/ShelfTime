@@ -68,6 +68,7 @@ import androidx.wear.compose.material.PositionIndicator
 import androidx.wear.compose.material.RevealValue
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.SwipeToRevealCard
+import androidx.wear.compose.material.SwipeToRevealDefaults
 import androidx.wear.compose.material.SwipeToRevealPrimaryAction
 import androidx.wear.compose.material.SwipeToRevealUndoAction
 import androidx.wear.compose.material.Text
@@ -553,6 +554,14 @@ class BookListActivity : ComponentActivity() {
         SwipeToRevealCard(
             revealState = revealState,
             onFullSwipe = onPrimaryAction,
+            colors = SwipeToRevealDefaults.actionColors(
+                // Default primaryActionBackgroundColor is MaterialTheme.colors.error
+                // (red) regardless of which action occupies the slot, so Download
+                // rendered just as red as Delete. Match the green/red convention
+                // BookManagementActivity already uses for the same two actions.
+                primaryActionBackgroundColor = if (isDownloaded) Color(0xFF8B0000) else Color(0xFF086409),
+                primaryActionContentColor = Color.White
+            ),
             primaryAction = {
                 SwipeToRevealPrimaryAction(
                     revealState = revealState,
