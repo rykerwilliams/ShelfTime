@@ -83,9 +83,15 @@ jobs:
             # supported workaround is running the read as the app itself via
             # `run-as`, streamed out as a tar so adb pull's per-file overhead
             # (and its inability to use run-as at all) doesn't matter.
+            echo "===== probing run-as directly (adb shell, not exec-out, so stdout/stderr aren't merged) ====="
+            adb shell run-as kaf.audiobookshelfwearos id 2>&1 || true
+            adb shell run-as kaf.audiobookshelfwearos ls -la /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots/ 2>&1 || true
             echo "===== pulling screenshots via run-as + tar ====="
-            adb exec-out run-as kaf.audiobookshelfwearos tar -cf - -C /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots . > /tmp/screenshots.tar 2>/tmp/screenshots_tar_err.txt
-            tar -tf /tmp/screenshots.tar >/dev/null 2>&1 && tar -xf /tmp/screenshots.tar -C docs/screenshots/ || { echo "run-as tar pull failed or produced an empty archive; stderr:"; cat /tmp/screenshots_tar_err.txt; }
+            adb exec-out run-as kaf.audiobookshelfwearos tar -cf - -C /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots . > /tmp/screenshots.tar
+            echo "tar file size:"
+            ls -la /tmp/screenshots.tar
+            tar -tf /tmp/screenshots.tar
+            tar -xf /tmp/screenshots.tar -C docs/screenshots/ || echo "extraction failed"
             echo "===== docs/screenshots contents ====="
             ls -la docs/screenshots/ || true
 
