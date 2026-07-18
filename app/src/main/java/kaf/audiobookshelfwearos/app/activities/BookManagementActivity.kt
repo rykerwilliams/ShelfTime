@@ -1,6 +1,7 @@
 package kaf.audiobookshelfwearos.app.activities
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -38,6 +39,8 @@ import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.services.MyDownloadService
 import kaf.audiobookshelfwearos.app.theme.AudiobookshelfWearOSTheme
+import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.DownloadBudgetChecker
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.StorageUtils
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
@@ -153,14 +156,42 @@ class BookManagementActivity : ComponentActivity() {
                         }
                         isDownloaded = false
                     } else {
-                        saveAudiobookToDB(libraryItem)
-                        for (track in libraryItem.media.tracks) {
-                            MyDownloadService.sendAddDownload(
-                                this@BookManagementActivity,
-                                track
-                            )
+                        lifecycleScope.launch {
+                            val userDataManager = UserDataManager(this@BookManagementActivity)
+                            val wouldExceedLimit = userDataManager.smartDeleteEnabled && run {
+                                val db = (applicationContext as MainApp).database
+                                val downloadedItems = db.libraryItemDao().getAllLibraryItems()
+                                    .filter { it.isDownloaded(this@BookManagementActivity) }
+                                DownloadBudgetChecker.wouldExceedLimit(
+                                    currentCount = downloadedItems.size,
+                                    currentTotalBytes = downloadedItems.sumOf { it.media.size },
+                                    newItemBytes = libraryItem.media.size,
+                                    maxDownloads = userDataManager.smartDeleteMaxDownloads,
+                                    maxTotalBytes = userDataManager.smartDeleteMaxBytes
+                                )
+                            }
+                            if (wouldExceedLimit) {
+                                // Deliberately blocks rather than auto-evicting like
+                                // SmartDeleteManager's after-a-download cleanup does --
+                                // starting a brand new download while already over
+                                // budget means the user clears space manually rather
+                                // than the app silently choosing what to delete.
+                                Toast.makeText(
+                                    this@BookManagementActivity,
+                                    "Download would exceed your storage limit -- delete something first",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                saveAudiobookToDB(libraryItem)
+                                for (track in libraryItem.media.tracks) {
+                                    MyDownloadService.sendAddDownload(
+                                        this@BookManagementActivity,
+                                        track
+                                    )
+                                }
+                                isDownloaded = true
+                            }
                         }
-                        isDownloaded = true
                     }
                 },
                 modifier = Modifier
