@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
@@ -70,9 +72,12 @@ import kaf.audiobookshelfwearos.app.data.Chapter
 import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.services.SleepTimerOption
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.BackPressCoordinator
 import kaf.audiobookshelfwearos.app.utils.PlayerBroadcastActions
 import kaf.audiobookshelfwearos.app.utils.RotaryScrubCalculator
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import kotlin.math.roundToInt
 
@@ -80,6 +85,16 @@ import kotlin.math.roundToInt
 class PlayerActivity : ComponentActivity() {
     private var playerService: PlayerService? = null
     private var isBound = false
+
+    // Double-press-Back-to-toggle-play/pause (see BackPressCoordinator): a single
+    // press doesn't navigate back immediately -- it waits DEFAULT_WINDOW_MILLIS to
+    // see whether a second press arrives. If one does, the pending navigation is
+    // cancelled and playback toggles instead; otherwise the delayed navigation
+    // fires like a normal single back-press. The Home button's single/double-press
+    // behavior is reserved by Wear OS itself and isn't interceptable at all, which
+    // is why this uses Back instead.
+    private var lastBackPressMillis: Long? = null
+    private var pendingBackNavigationJob: Job? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
@@ -101,6 +116,26 @@ class PlayerActivity : ComponentActivity() {
         val intent = Intent(this, PlayerService::class.java)
         startForegroundService(intent)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val now = System.currentTimeMillis()
+                if (BackPressCoordinator.isDoublePress(lastBackPressMillis, now)) {
+                    lastBackPressMillis = null
+                    pendingBackNavigationJob?.cancel()
+                    val playPauseIntent = Intent(this@PlayerActivity, PlayerService::class.java)
+                    playPauseIntent.action = "ACTION_PLAY_PAUSE"
+                    startForegroundService(playPauseIntent)
+                } else {
+                    lastBackPressMillis = now
+                    pendingBackNavigationJob = lifecycleScope.launch {
+                        delay(BackPressCoordinator.DEFAULT_WINDOW_MILLIS)
+                        lastBackPressMillis = null
+                        finish()
+                    }
+                }
+            }
+        })
 
         setContent {
             PlaybackControls()
