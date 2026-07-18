@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -411,6 +412,26 @@ class BookListActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Returns a LibraryItem guaranteed to carry full `media.tracks` data, fetching the
+     * expanded single-item endpoint if [item] doesn't already have it.
+     *
+     * `getLibraries()`'s main-list items come from `ApiHandler.getLibraryItems()`
+     * (`/api/libraries/:id/items`, no `expanded=1`), unlike `ApiHandler.getItem()`
+     * (`/api/items/:id?expanded=1`) which `ChapterListActivity` always fetches before
+     * anything there can act on tracks -- so a book that's never been locally touched
+     * before (never opened via ChapterListActivity, never downloaded) can reach a
+     * main-list row handler with an empty `media.tracks`. Confirmed via two real
+     * crash traces (`TrackPositionResolver.resolve()`'s "tracks must not be empty",
+     * from the tap-to-play path) and a silent no-op (the swipe-to-download path's
+     * `for (track in item.media.tracks)` looping zero times, no error, no download).
+     * Returns null if a full item couldn't be obtained (offline, server error, etc.).
+     */
+    private suspend fun resolveItemWithTracks(item: LibraryItem): LibraryItem? {
+        if (item.media.tracks.isNotEmpty()) return item
+        return ApiHandler(this).getItem(item.id)
+    }
+
     /** Queues every track of [item] for download via [MyDownloadService]. */
     private fun downloadItem(item: LibraryItem) {
         for (track in item.media.tracks) {
@@ -472,9 +493,25 @@ class BookListActivity : ComponentActivity() {
                 // Keep the row revealed so the undoPrimaryAction slot (below) shows.
                 coroutineScope.launch { revealState.animateTo(RevealValue.RightRevealed) }
             } else {
-                downloadItem(item)
-                // No undo affordance for starting a download -- close the row back up.
-                coroutineScope.launch { revealState.animateTo(RevealValue.Covered) }
+                // See resolveItemWithTracks() -- a never-locally-touched book's main-list
+                // item can have an empty media.tracks, which silently no-ops
+                // downloadItem() (an empty for-loop, no error) instead of actually
+                // starting anything. Fetch full track data first when needed.
+                coroutineScope.launch {
+                    val fullItem = resolveItemWithTracks(item)
+                    if (fullItem == null) {
+                        Toast.makeText(
+                            this@BookListActivity,
+                            "Couldn't start download -- try opening the book first",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        downloadItem(fullItem)
+                    }
+                    // No undo affordance for starting a download -- close the row back up
+                    // either way.
+                    revealState.animateTo(RevealValue.Covered)
+                }
             }
         }
 
@@ -513,10 +550,37 @@ class BookListActivity : ComponentActivity() {
                     if (BookTapRouter.shouldJumpStraightToPlayback(PlayerService.currentlyPlayingItemId)) {
                         // Nothing is currently playing: skip the chapter/detail screen and
                         // jump straight into playback for the tapped book.
-                        saveAudiobookToDB(item)
-                        PlayerService.setAudiobook(this, item, action = "continue")
-                        val intent = Intent(this, PlayerActivity::class.java)
-                        startActivity(intent)
+                        //
+                        // `item` here may be a LIST-level LibraryItem -- getLibraryItems()
+                        // (ApiHandler.kt) hits /api/libraries/:id/items with no
+                        // expanded=1, unlike getItem()'s /api/items/:id?expanded=1, so a
+                        // book that's never been locally touched before (never opened via
+                        // ChapterListActivity, which always fetches the expanded item on
+                        // entry, never downloaded) can reach here with an EMPTY
+                        // media.tracks list. PlayerService.setAudiobook() ->
+                        // TrackPositionResolver.resolve() requires a non-empty tracks
+                        // list and throws IllegalArgumentException otherwise -- confirmed
+                        // via a real crash trace. Fetch the expanded item first when
+                        // tracks are missing; skip the extra network round-trip when this
+                        // item already has full data (e.g. from local DB / a prior visit).
+                        // See resolveItemWithTracks() for the shared fetch-if-needed logic.
+                        lifecycleScope.launch {
+                            val fullItem = resolveItemWithTracks(item)
+                            if (fullItem == null) {
+                                // Couldn't get track data (offline, server error, etc.) --
+                                // fall back to the chapter/detail screen instead of
+                                // silently doing nothing or crashing.
+                                val intent = Intent(this@BookListActivity, ChapterListActivity::class.java).apply {
+                                    putExtra("id", item.id)
+                                }
+                                startActivity(intent)
+                                return@launch
+                            }
+                            saveAudiobookToDB(fullItem)
+                            PlayerService.setAudiobook(this@BookListActivity, fullItem, action = "continue")
+                            val intent = Intent(this@BookListActivity, PlayerActivity::class.java)
+                            startActivity(intent)
+                        }
                     } else {
                         val intent = Intent(this, ChapterListActivity::class.java).apply {
                             putExtra(
