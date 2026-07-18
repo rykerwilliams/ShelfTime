@@ -62,26 +62,57 @@ adb uninstall kaf.audiobookshelfwearos
 Note this wipes local app data (login, offline downloads) — you'll need to
 log in again after installing the sideloaded build.
 
-## 4. Skip retyping your login on the tiny screen
+## 4. Pre-configure login and settings without typing on the tiny screen
 
 After installing (or reinstalling — steps 3b and every OS-level app-data wipe
-lose your saved login), the app will read a config file if you push one to
-its external files directory, and use it to fill in the login screen — or
-log you in automatically if it has your login and password too.
+lose your saved login and settings), the app will read a config file if you
+push one to its external files directory, and use it to fill in the login
+screen (or log you in automatically) and/or preset any of the app's Settings.
 
 1. Copy [`shelftime-config.example.json`](shelftime-config.example.json) from
-   the repo root to `shelftime-config.json` and fill in your values. All
-   four fields are optional — any you leave out (or delete from the file)
-   just falls back to typing it manually as before:
+   the repo root to `shelftime-config.json` and fill in whichever fields you
+   want — every field is optional, and any you leave out (or delete from the
+   file) just falls back to the normal default (typing it manually, for the
+   login fields, or the in-app default otherwise):
 
    ```json
    {
      "protocol": "http",
      "serverAddress": "192.168.1.50:13378",
      "login": "your-username",
-     "password": "your-password"
+     "password": "your-password",
+     "jumpBackwardSeconds": 10,
+     "jumpForwardSeconds": 30,
+     "offlineMode": false,
+     "smartDeleteEnabled": true,
+     "smartDeleteMaxDownloads": 5,
+     "smartDeleteMaxBytes": 2000000000,
+     "bezelMode": "Scrub",
+     "tapToPlayEnabled": true
    }
    ```
+
+   | Field | Type | Meaning |
+   | --- | --- | --- |
+   | `protocol` | `"http"` or `"https"` | Server protocol. Only applied if no server address is already saved. |
+   | `serverAddress` | string | Your Audiobookshelf server's address, e.g. `192.168.1.50:13378`. Only applied if no server address is already saved. |
+   | `login` | string | Username. Only applied if no login is already saved. |
+   | `password` | string | Password. Only applied if no password is already saved. If both `login` and `password` are provided (and neither was already saved), the app logs in automatically without needing a tap. |
+   | `jumpBackwardSeconds` | integer | Rewind button's jump amount. Same setting as the Settings screen's "Jump Backward" stepper (5-60, in steps of 5). |
+   | `jumpForwardSeconds` | integer | Fast-forward button's jump amount. Same setting as the Settings screen's "Jump Forward" stepper (5-60, in steps of 5). |
+   | `offlineMode` | `true`/`false` | Skips network calls the app would otherwise make (see the in-app Offline Mode setting). |
+   | `smartDeleteEnabled` | `true`/`false` | Whether old downloads get automatically cleaned up once a limit below is reached. |
+   | `smartDeleteMaxDownloads` | integer | Smart Delete's max number of downloaded books kept at once (1-20). |
+   | `smartDeleteMaxBytes` | integer | Smart Delete's max total download size, in bytes (e.g. `2000000000` = 2GB). |
+   | `bezelMode` | `"Scrub"`, `"Volume"`, or `"Off"` | What the watch's rotating bezel/crown does on the Now Playing screen. |
+   | `tapToPlayEnabled` | `true`/`false` | Whether tapping a book in the list jumps straight into playback when nothing's currently playing, or always opens the chapter list instead. |
+
+   The four login fields (`protocol`/`serverAddress`/`login`/`password`) are
+   one-time secrets: they only fill in if you haven't already configured that
+   value, so pushing the file again later won't silently overwrite a login
+   you've since changed in the app. Every other field is an ordinary
+   preference default, applied unconditionally whenever present -- so you can
+   deliberately re-push the file later with new values to change any of them.
 
 2. Push it to the app's external files directory (same directory the app
    already uses for downloads — no storage permission needed). The
@@ -91,12 +122,9 @@ log you in automatically if it has your login and password too.
    adb push shelftime-config.json /sdcard/Android/data/kaf.audiobookshelfwearos/files/shelftime-config.json
    ```
 
-3. Launch the app. It reads the file once, fills in whatever fields were
-   provided (without touching anything you'd already configured — it never
-   overwrites an existing setup), then deletes the file so the password
-   doesn't sit around in plain text on the watch. If both `login` and
-   `password` were included, it logs you in automatically without needing a
-   tap.
+3. Launch the app. It reads the file once, applies whatever fields were
+   provided, then deletes the file so the plaintext password doesn't linger
+   on disk.
 
 Keep your filled-in `shelftime-config.json` around (e.g. alongside the APK)
 so you can re-push it after any future reinstall.

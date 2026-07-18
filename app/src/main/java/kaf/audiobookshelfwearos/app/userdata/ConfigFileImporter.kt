@@ -13,16 +13,22 @@ data class SideloadConfig(
     val login: String? = null,
     val password: String? = null,
     val jumpBackwardSeconds: Int? = null,
-    val jumpForwardSeconds: Int? = null
+    val jumpForwardSeconds: Int? = null,
+    val offlineMode: Boolean? = null,
+    val smartDeleteEnabled: Boolean? = null,
+    val smartDeleteMaxDownloads: Int? = null,
+    val smartDeleteMaxBytes: Long? = null,
+    val bezelMode: String? = null,
+    val tapToPlayEnabled: Boolean? = null
 )
 
 /**
  * Pure result of merging a [SideloadConfig] against the currently-persisted credential
  * values. Credential-style fields (`protocol`/`serverAddress`/`login`/`password`) are
  * one-time secrets, so they're only populated here if the corresponding "current" value
- * passed in was empty. `jumpBackwardSeconds`/`jumpForwardSeconds` are preference
- * defaults, not secrets, so they pass through unconditionally whenever present in the
- * config -- a user may legitimately want to re-push the config file to change them.
+ * passed in was empty. Every other field is a preference default, not a secret, so it
+ * passes through unconditionally whenever present in the config -- a user may
+ * legitimately want to re-push the config file to change any of them.
  *
  * Kept free of any Context/SharedPreferences dependency so the merge logic itself is
  * unit-testable without needing a real UserDataManager.
@@ -33,11 +39,20 @@ data class ConfigApplicationResult(
     val login: String? = null,
     val password: String? = null,
     val jumpBackwardSeconds: Int? = null,
-    val jumpForwardSeconds: Int? = null
+    val jumpForwardSeconds: Int? = null,
+    val offlineMode: Boolean? = null,
+    val smartDeleteEnabled: Boolean? = null,
+    val smartDeleteMaxDownloads: Int? = null,
+    val smartDeleteMaxBytes: Long? = null,
+    val bezelMode: String? = null,
+    val tapToPlayEnabled: Boolean? = null
 ) {
     val anyApplied: Boolean
         get() = serverAddress != null || login != null || password != null ||
-            jumpBackwardSeconds != null || jumpForwardSeconds != null
+            jumpBackwardSeconds != null || jumpForwardSeconds != null ||
+            offlineMode != null || smartDeleteEnabled != null ||
+            smartDeleteMaxDownloads != null || smartDeleteMaxBytes != null ||
+            bezelMode != null || tapToPlayEnabled != null
 }
 
 /**
@@ -85,7 +100,13 @@ object ConfigFileImporter {
             // Preference defaults, not one-time secrets -- apply unconditionally
             // whenever present, unlike the credential fields above.
             jumpBackwardSeconds = config.jumpBackwardSeconds,
-            jumpForwardSeconds = config.jumpForwardSeconds
+            jumpForwardSeconds = config.jumpForwardSeconds,
+            offlineMode = config.offlineMode,
+            smartDeleteEnabled = config.smartDeleteEnabled,
+            smartDeleteMaxDownloads = config.smartDeleteMaxDownloads,
+            smartDeleteMaxBytes = config.smartDeleteMaxBytes,
+            bezelMode = config.bezelMode,
+            tapToPlayEnabled = config.tapToPlayEnabled
         )
     }
 
@@ -116,6 +137,12 @@ object ConfigFileImporter {
             resolved.password?.let { userDataManager.password = it }
             resolved.jumpBackwardSeconds?.let { userDataManager.jumpBackwardSeconds = it }
             resolved.jumpForwardSeconds?.let { userDataManager.jumpForwardSeconds = it }
+            resolved.offlineMode?.let { userDataManager.offlineMode = it }
+            resolved.smartDeleteEnabled?.let { userDataManager.smartDeleteEnabled = it }
+            resolved.smartDeleteMaxDownloads?.let { userDataManager.smartDeleteMaxDownloads = it }
+            resolved.smartDeleteMaxBytes?.let { userDataManager.smartDeleteMaxBytes = it }
+            resolved.bezelMode?.let { userDataManager.bezelMode = it }
+            resolved.tapToPlayEnabled?.let { userDataManager.tapToPlayEnabled = it }
 
             resolved.anyApplied
         } catch (e: Exception) {

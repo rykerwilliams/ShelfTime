@@ -107,6 +107,39 @@ class ConfigFileImporterTest {
     }
 
     @Test
+    fun `preference fields present are applied unconditionally even when credentials already set`() {
+        val config = SideloadConfig(
+            protocol = "https",
+            serverAddress = "example.com",
+            login = "someone",
+            password = "secret",
+            offlineMode = true,
+            smartDeleteEnabled = false,
+            smartDeleteMaxDownloads = 10,
+            smartDeleteMaxBytes = 5_000_000_000L,
+            bezelMode = "Volume",
+            tapToPlayEnabled = false
+        )
+
+        val result = ConfigFileImporter.resolveUpdates(
+            config,
+            currentServerAddress = "already-set.example.com",
+            currentLogin = "already-set-login",
+            currentPassword = "already-set-password"
+        )
+
+        assertNull(result.protocol)
+        assertNull(result.serverAddress)
+        assertEquals(true, result.offlineMode)
+        assertEquals(false, result.smartDeleteEnabled)
+        assertEquals(10, result.smartDeleteMaxDownloads)
+        assertEquals(5_000_000_000L, result.smartDeleteMaxBytes)
+        assertEquals("Volume", result.bezelMode)
+        assertEquals(false, result.tapToPlayEnabled)
+        assertTrue(result.anyApplied)
+    }
+
+    @Test
     fun `jump values present and credentials empty both apply together`() {
         val config = SideloadConfig(
             serverAddress = "new-server.example.com",
