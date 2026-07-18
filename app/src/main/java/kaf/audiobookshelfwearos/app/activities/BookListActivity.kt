@@ -87,6 +87,7 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.BookTapRouter
 import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
+import kaf.audiobookshelfwearos.app.utils.ItemTrackResolver
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -463,10 +464,8 @@ class BookListActivity : ComponentActivity() {
      * `for (track in item.media.tracks)` looping zero times, no error, no download).
      * Returns null if a full item couldn't be obtained (offline, server error, etc.).
      */
-    private suspend fun resolveItemWithTracks(item: LibraryItem): LibraryItem? {
-        if (item.media.tracks.isNotEmpty()) return item
-        return ApiHandler(this).getItem(item.id)
-    }
+    private suspend fun resolveItemWithTracks(item: LibraryItem): LibraryItem? =
+        ItemTrackResolver.resolveItemWithTracks(item) { id -> ApiHandler(this).getItem(id) }
 
     /** Queues every track of [item] for download via [MyDownloadService]. */
     private fun downloadItem(item: LibraryItem) {
