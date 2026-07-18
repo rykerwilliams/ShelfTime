@@ -85,14 +85,9 @@ jobs:
             # (and its inability to use run-as at all) doesn't matter.
             echo "===== pulling screenshots via run-as + tar ====="
             adb exec-out run-as kaf.audiobookshelfwearos tar -cf - -C /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots . > /tmp/screenshots.tar 2>/tmp/screenshots_tar_err.txt
-            if [ -s /tmp/screenshots.tar ]; then
-              tar -xf /tmp/screenshots.tar -C docs/screenshots/
-              echo "extracted:"
-              ls -la docs/screenshots/
-            else
-              echo "run-as tar pull failed or produced an empty archive; stderr:"
-              cat /tmp/screenshots_tar_err.txt || true
-            fi
+            tar -tf /tmp/screenshots.tar >/dev/null 2>&1 && tar -xf /tmp/screenshots.tar -C docs/screenshots/ || { echo "run-as tar pull failed or produced an empty archive; stderr:"; cat /tmp/screenshots_tar_err.txt; }
+            echo "===== docs/screenshots contents ====="
+            ls -la docs/screenshots/ || true
 
       - name: Commit and push screenshots
         run: |
