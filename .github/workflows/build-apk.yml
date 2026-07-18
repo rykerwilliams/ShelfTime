@@ -142,7 +142,7 @@ jobs:
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
             adb logcat -c
-            ./gradlew connectedDebugAndroidTest --stacktrace; echo $? > /tmp/gradle_exit_code.txt
+            ./gradlew connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.notClass=kaf.audiobookshelfwearos.app.screenshots.ScreenshotWalkTest; echo $? > /tmp/gradle_exit_code.txt
             echo "===== logcat: crashes / JUnit runner errors ====="
             adb logcat -d | grep -E -A 80 "FATAL EXCEPTION|AndroidJUnitRunner|Failed to instantiate|Caused by|initializationError" | head -400
             echo "===== end logcat ====="

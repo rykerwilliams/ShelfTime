@@ -55,6 +55,12 @@ The original project's README is preserved at [README.original.md](README.origin
 - [ ] Pagination for large libraries
 - [ ] Getting unfinished audiobooks
 
+## Screens
+
+See [docs/SCREENS.md](docs/SCREENS.md) for a full walkthrough of every screen,
+its interactions, and how navigation between screens works, plus
+auto-generated screenshots.
+
 ## Installing
 
 See [SIDELOADING.md](SIDELOADING.md).
