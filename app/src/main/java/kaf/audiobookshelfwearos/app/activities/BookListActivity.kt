@@ -559,12 +559,20 @@ class BookListActivity : ComponentActivity() {
         }
 
         val onPrimaryAction: () -> Unit = {
-            if (isDownloaded || isDownloading) {
+            if (isDownloaded) {
                 deleteItem(effectiveItem)
                 isDownloaded = false
-                isDownloading = false
                 // Keep the row revealed so the undoPrimaryAction slot (below) shows.
                 coroutineScope.launch { revealState.animateTo(RevealValue.RightRevealed) }
+            } else if (isDownloading) {
+                // Cancelling an in-flight download is low-stakes and instant --
+                // unlike deleting a completed download (which throws away real
+                // progress and would need a full re-download to undo), there's
+                // nothing here worth an Undo prompt for. Just stop it and close
+                // the row.
+                deleteItem(effectiveItem)
+                isDownloading = false
+                coroutineScope.launch { revealState.animateTo(RevealValue.Covered) }
             } else if (isRequestingDownload) {
                 Toast.makeText(
                     this@BookListActivity,
