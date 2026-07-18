@@ -141,7 +141,7 @@ jobs:
           script: |
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
-            ./gradlew connectedDebugAndroidTest
+            ./gradlew connectedDebugAndroidTest --stacktrace
 
       - name: Upload instrumented test report
         if: always()
