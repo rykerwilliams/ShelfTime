@@ -72,15 +72,19 @@ jobs:
             adb shell wm dismiss-keyguard
             ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=kaf.audiobookshelfwearos.app.screenshots.ScreenshotWalkTest
             mkdir -p docs/screenshots
+            echo "===== adb root ====="
+            adb root || true
+            sleep 2
+            echo "===== find *.png under /data (requires root) ====="
+            adb shell find /data -iname "*.png" 2>&1 || true
             echo "===== find *.png under /sdcard ====="
             adb shell find /sdcard -iname "*.png" 2>&1 || true
             echo "===== find *.png under /storage ====="
             adb shell find /storage -iname "*.png" 2>&1 || true
-            echo "===== ls -la assumed app files dir ====="
-            adb shell run-as kaf.audiobookshelfwearos ls -la /data/data/kaf.audiobookshelfwearos/files/ 2>&1 || true
-            adb shell ls -la /sdcard/Android/data/kaf.audiobookshelfwearos/files/ 2>&1 || true
-            echo "===== attempting pull ====="
-            adb pull /sdcard/Android/data/kaf.audiobookshelfwearos/files/screenshots/. docs/screenshots/ || echo "pull from assumed path failed, see find output above"
+            echo "===== attempting pull from private app files dir ====="
+            adb pull /data/data/kaf.audiobookshelfwearos/files/screenshots/. docs/screenshots/ || echo "pull from /data path failed"
+            echo "===== attempting pull from assumed external files dir ====="
+            adb pull /sdcard/Android/data/kaf.audiobookshelfwearos/files/screenshots/. docs/screenshots/ || echo "pull from /sdcard path failed"
 
       - name: Commit and push screenshots
         run: |
