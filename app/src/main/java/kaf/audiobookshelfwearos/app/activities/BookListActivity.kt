@@ -44,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -85,6 +86,7 @@ import kaf.audiobookshelfwearos.app.services.MyDownloadService
 import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.BookTapRouter
+import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -364,7 +366,15 @@ class BookListActivity : ComponentActivity() {
                 
                 libraries?.let { libraryList ->
                     val hasResults = libraryList.any { it.libraryItems.isNotEmpty() }
-                    
+
+                    // "Continue Listening" mirrors the official Audiobookshelf clients:
+                    // in-progress books, most recently listened first, shown ahead of
+                    // the rest of the library. Not shown while actively searching --
+                    // search results should just be the matches, not re-sectioned.
+                    val continueListening = if (isSearchActive) emptyList() else
+                        ContinueListeningSelector.select(libraryList.flatMap { it.libraryItems })
+                    val continueListeningIds = continueListening.map { it.id }.toSet()
+
                     if (isSearchActive && !hasResults && searchQuery.isNotEmpty()) {
                         // Show "No results found" message in search mode
                         item {
@@ -383,16 +393,42 @@ class BookListActivity : ComponentActivity() {
                             }
                         }
                     } else {
-                        // Show library items
-                        for ((libIndex, library) in libraryList.withIndex()) {
+                        if (continueListening.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Continue Listening",
+                                    fontSize = 10.sp,
+                                    color = Color.Gray,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp, bottom = 4.dp)
+                                )
+                            }
                             itemsIndexed(
-                                library.libraryItems,
+                                continueListening,
+                                key = { _, item -> "continue_${item.id}" }
+                            ) { _, item ->
+                                Column {
+                                    BookItem(item)
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
+
+                        // Show remaining library items (already-shown "Continue
+                        // Listening" books excluded so they don't render twice).
+                        for ((libIndex, library) in libraryList.withIndex()) {
+                            val remainingItems =
+                                library.libraryItems.filter { it.id !in continueListeningIds }
+                            itemsIndexed(
+                                remainingItems,
                                 key = { _, item -> item.id }
                             ) { index, item ->
                                 Column {
                                     BookItem(item)
                                     val showDivider =
-                                        (index != library.libraryItems.size - 1 || libIndex != libraryList.size - 1)
+                                        (index != remainingItems.size - 1 || libIndex != libraryList.size - 1)
                                     if (showDivider) {
                                         HorizontalDivider()
                                     }
