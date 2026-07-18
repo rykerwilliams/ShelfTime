@@ -5,15 +5,21 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,10 +46,12 @@ import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.services.MyDownloadService
 import kaf.audiobookshelfwearos.app.theme.AudiobookshelfWearOSTheme
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.AudiobookProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.DownloadBudgetChecker
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.StorageUtils
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -113,10 +121,55 @@ class BookManagementActivity : ComponentActivity() {
 
     @Composable
     private fun BookManagementContent(libraryItem: LibraryItem) {
-        var isDownloaded by remember {
+        // Keyed on libraryItem.id (was a bare `remember` before, computed once and
+        // never updated) -- this screen's Download button used to get stuck showing
+        // whatever state it had on first composition, e.g. after onResume()'s
+        // re-fetch or after a download that finished while this screen was open.
+        var isDownloaded by remember(libraryItem.id) {
             mutableStateOf(
                 libraryItem.media.tracks.all { track -> track.isDownloaded(this) }
             )
+        }
+        var isDownloading by remember(libraryItem.id) {
+            mutableStateOf(libraryItem.media.tracks.any { track -> track.isDownloading(this) })
+        }
+        var downloadProgressPercent by remember(libraryItem.id) { mutableFloatStateOf(0f) }
+        var downloadSpeedBytesPerSecond by remember(libraryItem.id) { mutableLongStateOf(0L) }
+        var downloadedBytes by remember(libraryItem.id) { mutableLongStateOf(0L) }
+        var downloadTotalBytes by remember(libraryItem.id) { mutableLongStateOf(0L) }
+
+        // Reactively updates isDownloading/isDownloaded off MyDownloadService's
+        // single shared DownloadManager.Listener-backed flow -- same mechanism
+        // BookListActivity's swipe row and ChapterListActivity already use.
+        LaunchedEffect(libraryItem.id) {
+            MyDownloadService.getProgressFlow().collect { progress ->
+                val trackIds = libraryItem.media.tracks.map { it.id }
+                if (progress.trackId in trackIds) {
+                    val statuses = trackIds.map { MyDownloadService.getDownloadStatus(this@BookManagementActivity, it) }
+                    isDownloading = statuses.any { it.isDownloading }
+                    isDownloaded = statuses.isNotEmpty() && statuses.all { it.isDownloaded }
+                }
+            }
+        }
+
+        // Continuous byte-level progress/speed never comes through the flow above
+        // (Media3's DownloadManager.Listener only fires on state transitions) --
+        // same poll-while-downloading pattern as BookListActivity/ChapterListActivity,
+        // bounded to only run while this screen's book is actively downloading.
+        LaunchedEffect(isDownloading) {
+            while (isDownloading) {
+                val progresses = libraryItem.media.tracks.mapNotNull {
+                    MyDownloadService.getDownloadProgress(this@BookManagementActivity, it.id)
+                }
+                if (progresses.isNotEmpty()) {
+                    val aggregate = AudiobookProgressCalculator.calculateAudiobookProgress(libraryItem, progresses)
+                    downloadProgressPercent = aggregate.overallProgress
+                    downloadSpeedBytesPerSecond = aggregate.averageDownloadSpeed
+                    downloadedBytes = aggregate.totalBytesDownloaded
+                    downloadTotalBytes = aggregate.totalBytes
+                }
+                delay(2000L)
+            }
         }
 
         Column(
@@ -147,7 +200,10 @@ class BookManagementActivity : ComponentActivity() {
 
             Button(
                 onClick = {
-                    if (isDownloaded) {
+                    if (isDownloaded || isDownloading) {
+                        // Media3's DownloadManager.removeDownload() cancels an
+                        // in-flight download and deletes a completed one via the
+                        // same call, so Cancel and Delete share this one branch.
                         for (track in libraryItem.media.tracks) {
                             MyDownloadService.sendRemoveDownload(
                                 this@BookManagementActivity,
@@ -155,6 +211,7 @@ class BookManagementActivity : ComponentActivity() {
                             )
                         }
                         isDownloaded = false
+                        isDownloading = false
                     } else {
                         lifecycleScope.launch {
                             // Checked unconditionally -- unlike the Smart Delete
@@ -204,7 +261,7 @@ class BookManagementActivity : ComponentActivity() {
                                         track
                                     )
                                 }
-                                isDownloaded = true
+                                isDownloading = true
                             }
                         }
                     }
@@ -213,10 +270,51 @@ class BookManagementActivity : ComponentActivity() {
                     .fillMaxWidth()
                     .padding(top = 16.dp),
                 colors = ButtonDefaults.buttonColors(
-                    backgroundColor = if (isDownloaded) Color(0xFF8B0000) else Color(0xFF086409)
+                    backgroundColor = when {
+                        isDownloaded -> Color(0xFF8B0000)
+                        isDownloading -> Color(0xFFB8860B)
+                        else -> Color(0xFF086409)
+                    }
                 )
             ) {
-                Text(text = if (isDownloaded) "Delete" else "Download")
+                if (isDownloading) {
+                    // The button's own background (from `colors` above) is already
+                    // amber -- fill the entire button with green from the left,
+                    // growing with progress, same convention as BookListActivity's
+                    // swipe row.
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .fillMaxHeight()
+                                .fillMaxWidth(fraction = (downloadProgressPercent / 100f).coerceIn(0f, 1f))
+                                .background(Color(0xFF086409))
+                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.align(Alignment.Center)
+                        ) {
+                            Text(text = "Cancel", fontSize = 14.sp, color = Color.White)
+                            if (downloadTotalBytes > 0) {
+                                Text(
+                                    text = "${DownloadProgressCalculator.formatBytes(downloadedBytes)} / " +
+                                        DownloadProgressCalculator.formatBytes(downloadTotalBytes),
+                                    fontSize = 11.sp,
+                                    color = Color.White
+                                )
+                            }
+                            if (downloadSpeedBytesPerSecond > 0) {
+                                Text(
+                                    text = "${DownloadProgressCalculator.formatBytes(downloadSpeedBytesPerSecond)}/s",
+                                    fontSize = 11.sp,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(text = if (isDownloaded) "Delete" else "Download")
+                }
             }
         }
     }
