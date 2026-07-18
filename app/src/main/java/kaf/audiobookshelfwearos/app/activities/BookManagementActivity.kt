@@ -157,8 +157,15 @@ class BookManagementActivity : ComponentActivity() {
                         isDownloaded = false
                     } else {
                         lifecycleScope.launch {
+                            // Checked unconditionally -- unlike the Smart Delete
+                            // budget below, no setting can make the physical disk
+                            // bigger.
+                            val insufficientDeviceSpace = DownloadBudgetChecker.hasInsufficientDeviceSpace(
+                                availableBytes = StorageUtils.getAvailableSpaceBytes(this@BookManagementActivity),
+                                newItemBytes = libraryItem.media.size
+                            )
                             val userDataManager = UserDataManager(this@BookManagementActivity)
-                            val wouldExceedLimit = userDataManager.smartDeleteEnabled && run {
+                            val wouldExceedLimit = !insufficientDeviceSpace && userDataManager.smartDeleteEnabled && run {
                                 val db = (applicationContext as MainApp).database
                                 val downloadedItems = db.libraryItemDao().getAllLibraryItems()
                                     .filter { it.isDownloaded(this@BookManagementActivity) }
@@ -170,7 +177,15 @@ class BookManagementActivity : ComponentActivity() {
                                     maxTotalBytes = userDataManager.smartDeleteMaxBytes
                                 )
                             }
-                            if (wouldExceedLimit) {
+                            if (insufficientDeviceSpace) {
+                                // Same manual-deletion-required policy as the budget
+                                // block below -- delete something, then try again.
+                                Toast.makeText(
+                                    this@BookManagementActivity,
+                                    "Not enough storage space -- delete something first",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else if (wouldExceedLimit) {
                                 // Deliberately blocks rather than auto-evicting like
                                 // SmartDeleteManager's after-a-download cleanup does --
                                 // starting a brand new download while already over

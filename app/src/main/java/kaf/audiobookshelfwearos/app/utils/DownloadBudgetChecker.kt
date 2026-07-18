@@ -19,4 +19,13 @@ object DownloadBudgetChecker {
     ): Boolean {
         return (currentCount + 1) > maxDownloads || (currentTotalBytes + newItemBytes) > maxTotalBytes
     }
+
+    /**
+     * Separate from [wouldExceedLimit]: this is the actual physical device storage,
+     * not the user-configured Smart Delete budget, so it's checked unconditionally
+     * (not gated behind smartDeleteEnabled) -- no setting can make the disk bigger.
+     */
+    fun hasInsufficientDeviceSpace(availableBytes: Long, newItemBytes: Long): Boolean {
+        return newItemBytes > availableBytes
+    }
 }

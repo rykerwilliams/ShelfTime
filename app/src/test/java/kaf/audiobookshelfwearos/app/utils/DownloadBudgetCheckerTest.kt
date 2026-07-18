@@ -57,4 +57,14 @@ class DownloadBudgetCheckerTest {
             )
         )
     }
+
+    @Test
+    fun `enough device space when the item fits within available bytes`() {
+        assertFalse(DownloadBudgetChecker.hasInsufficientDeviceSpace(availableBytes = 1_000L, newItemBytes = 1_000L))
+    }
+
+    @Test
+    fun `insufficient device space when the item is larger than available bytes`() {
+        assertTrue(DownloadBudgetChecker.hasInsufficientDeviceSpace(availableBytes = 999L, newItemBytes = 1_000L))
+    }
 }

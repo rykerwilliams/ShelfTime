@@ -13,6 +13,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,12 +21,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -39,6 +42,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,10 +92,13 @@ import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.services.MyDownloadService
 import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.AudiobookProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.BookTapRouter
 import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
 import kaf.audiobookshelfwearos.app.utils.DownloadBudgetChecker
+import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.ItemTrackResolver
+import kaf.audiobookshelfwearos.app.utils.StorageUtils
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -526,6 +534,10 @@ class BookListActivity : ComponentActivity() {
         // seconds, and the row stays revealed/tappable the whole time with no other
         // visual change to show a tap already registered).
         var isRequestingDownload by remember(item.id) { mutableStateOf(false) }
+        // Percent (0-100) and bytes/sec, shown as a mini progress bar + speed label
+        // in the primary action while isDownloading -- see the poll loop below.
+        var downloadProgressPercent by remember(item.id) { mutableFloatStateOf(0f) }
+        var downloadSpeedBytesPerSecond by remember(item.id) { mutableLongStateOf(0L) }
         val revealState = rememberRevealState()
         val coroutineScope = rememberCoroutineScope()
 
@@ -533,8 +545,7 @@ class BookListActivity : ComponentActivity() {
         // single shared DownloadManager.Listener-backed flow -- the same mechanism
         // ChapterListActivity already uses -- instead of a per-row poll loop. State
         // *transitions* (queued -> downloading -> completed) always fire through
-        // this flow; only continuous byte-level progress needs polling, which this
-        // row doesn't display.
+        // this flow.
         LaunchedEffect(item.id) {
             MyDownloadService.getProgressFlow().collect { progress ->
                 val trackIds = effectiveItem.media.tracks.map { it.id }
@@ -543,6 +554,26 @@ class BookListActivity : ComponentActivity() {
                     isDownloading = statuses.any { it.isDownloading }
                     isDownloaded = statuses.isNotEmpty() && statuses.all { it.isDownloaded }
                 }
+            }
+        }
+
+        // Continuous byte-level progress (percent/speed) never comes through the
+        // flow above -- Media3's DownloadManager.Listener only fires on state
+        // transitions -- so this mirrors ChapterListActivity's existing
+        // poll-while-downloading pattern: same 2s interval, and self-limiting
+        // since it only runs at all while this one row is actively downloading
+        // (not a standing per-row poll).
+        LaunchedEffect(isDownloading) {
+            while (isDownloading) {
+                val progresses = effectiveItem.media.tracks.mapNotNull {
+                    MyDownloadService.getDownloadProgress(this@BookListActivity, it.id)
+                }
+                if (progresses.isNotEmpty()) {
+                    val aggregate = AudiobookProgressCalculator.calculateAudiobookProgress(effectiveItem, progresses)
+                    downloadProgressPercent = aggregate.overallProgress
+                    downloadSpeedBytesPerSecond = aggregate.averageDownloadSpeed
+                }
+                delay(2000L)
             }
         }
 
@@ -596,8 +627,14 @@ class BookListActivity : ComponentActivity() {
                             ).show()
                         } else {
                             effectiveItem = fullItem
+                            // Checked unconditionally -- unlike the Smart Delete budget
+                            // below, no setting can make the physical disk bigger.
+                            val insufficientDeviceSpace = DownloadBudgetChecker.hasInsufficientDeviceSpace(
+                                availableBytes = StorageUtils.getAvailableSpaceBytes(this@BookListActivity),
+                                newItemBytes = fullItem.media.size
+                            )
                             val userDataManager = UserDataManager(this@BookListActivity)
-                            val wouldExceedLimit = userDataManager.smartDeleteEnabled && run {
+                            val wouldExceedLimit = !insufficientDeviceSpace && userDataManager.smartDeleteEnabled && run {
                                 val db = (applicationContext as MainApp).database
                                 val downloadedItems = db.libraryItemDao().getAllLibraryItems()
                                     .filter { it.isDownloaded(this@BookListActivity) }
@@ -609,7 +646,15 @@ class BookListActivity : ComponentActivity() {
                                     maxTotalBytes = userDataManager.smartDeleteMaxBytes
                                 )
                             }
-                            if (wouldExceedLimit) {
+                            if (insufficientDeviceSpace) {
+                                // Same manual-deletion-required policy as the budget
+                                // block below -- delete something, then try again.
+                                Toast.makeText(
+                                    this@BookListActivity,
+                                    "Not enough storage space -- delete something first",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else if (wouldExceedLimit) {
                                 // Deliberately blocks rather than auto-evicting like
                                 // SmartDeleteManager's after-a-download cleanup does --
                                 // starting a brand new download while already over
@@ -662,18 +707,39 @@ class BookListActivity : ComponentActivity() {
                     revealState = revealState,
                     onClick = onPrimaryAction,
                     icon = {
-                        Icon(
-                            imageVector = when {
-                                isDownloaded -> Icons.Filled.Delete
-                                isDownloading -> Icons.Filled.Close
-                                else -> Icons.Filled.Download
-                            },
-                            contentDescription = when {
-                                isDownloaded -> "Delete"
-                                isDownloading -> "Cancel"
-                                else -> "Download"
+                        if (isDownloading) {
+                            // Orange track, green fill growing left-to-right with
+                            // progress -- same green/orange as the row's own
+                            // Download/Cancel colors above, so the bar reads as
+                            // "how much of Cancel's amber has turned into done".
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(36.dp)
+                                        .height(6.dp)
+                                        .background(Color(0xFFB8860B), RoundedCornerShape(3.dp))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(fraction = (downloadProgressPercent / 100f).coerceIn(0f, 1f))
+                                            .fillMaxHeight()
+                                            .background(Color(0xFF086409), RoundedCornerShape(3.dp))
+                                    )
+                                }
+                                if (downloadSpeedBytesPerSecond > 0) {
+                                    Text(
+                                        text = "${DownloadProgressCalculator.formatBytes(downloadSpeedBytesPerSecond)}/s",
+                                        fontSize = 7.sp,
+                                        color = Color.White
+                                    )
+                                }
                             }
-                        )
+                        } else {
+                            Icon(
+                                imageVector = if (isDownloaded) Icons.Filled.Delete else Icons.Filled.Download,
+                                contentDescription = if (isDownloaded) "Delete" else "Download"
+                            )
+                        }
                     },
                     label = {
                         Text(
