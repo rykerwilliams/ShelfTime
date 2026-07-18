@@ -132,7 +132,7 @@ class BookManagementActivity : ComponentActivity() {
             )
 
             InfoRow("Size", DownloadProgressCalculator.formatBytes(libraryItem.media.size))
-            InfoRow("Chapters", "${libraryItem.media.numChapters}")
+            InfoRow("Chapters", "${libraryItem.media.chapters.size}")
             InfoRow("Author", libraryItem.author)
 
             val narratorName = libraryItem.media.metadata.narratorName
