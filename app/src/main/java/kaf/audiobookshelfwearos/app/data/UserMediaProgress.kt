@@ -10,7 +10,7 @@ data class UserMediaProgress(
     @PrimaryKey val id: String = "",
     var libraryItemId: String = "",
     val episodeId: String? = null,
-    val duration: Double = 0.0,
+    var duration: Double = 0.0,
     val progress: Double = 0.0,
     var currentTime: Double = 0.0,
     val isFinished: Boolean = false,

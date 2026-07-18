@@ -141,4 +141,17 @@ jobs:
           script: |
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
-            ./gradlew connectedDebugAndroidTest
+            adb logcat -c
+            ./gradlew connectedDebugAndroidTest --stacktrace; echo $? > /tmp/gradle_exit_code.txt
+            echo "===== logcat: crashes / JUnit runner errors ====="
+            adb logcat -d | grep -E -A 80 "FATAL EXCEPTION|AndroidJUnitRunner|Failed to instantiate|Caused by|initializationError" | head -400
+            echo "===== end logcat ====="
+            exit $(cat /tmp/gradle_exit_code.txt)
+
+      - name: Upload instrumented test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instrumented-test-report
+          path: app/build/reports/androidTests/connected
+          retention-days: 7

@@ -15,6 +15,8 @@ import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.User
 import kaf.audiobookshelfwearos.app.data.UserMediaProgress
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.ProgressSyncPolicy
+import kaf.audiobookshelfwearos.app.utils.ProgressUploadBodyBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -148,16 +150,27 @@ class ApiHandler(private val context: Context) {
             if (BuildConfig.DEBUG) Thread.sleep(1500)
             val request = getRequest("/api/libraries/$id/items?sort=progress&desc=1")
 
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) showToast(response.code.toString())
-                val responseBody = response.body?.string()
-                // Extract token from the JSON response
-                val jsonResponse = responseBody?.let { JSONObject(it) }
-                val results = jsonResponse?.getJSONArray("results")
-                Timber.d(results?.length().toString())
-                val items: List<LibraryItem> =
-                    jacksonMapper.readValue<List<LibraryItem>>(results.toString())
-                return@use items
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        showToast(response.code.toString())
+                        return@use listOf()
+                    }
+                    val responseBody = response.body?.string()
+                    // Extract token from the JSON response
+                    val jsonResponse = responseBody?.let { JSONObject(it) }
+                    val results = jsonResponse?.getJSONArray("results")
+                    Timber.d(results?.length().toString())
+                    val items: List<LibraryItem> =
+                        jacksonMapper.readValue<List<LibraryItem>>(results.toString())
+                    return@use items
+                }
+            } catch (e: SocketTimeoutException) {
+                e.printStackTrace()
+                return@withContext listOf()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                return@withContext listOf()
             }
         }
     }
@@ -183,20 +196,32 @@ class ApiHandler(private val context: Context) {
 
     /**
      * Enhanced updateProgress with retry logic
+     * @param isPeriodicActiveSave True only for PlayerService's hot periodic-save call
+     * site during active playback, where the saving device is definitionally the
+     * newest-progress source. Passing true skips the pre-upload getMediaProgress()
+     * GET (see ProgressSyncPolicy) so this, the app's highest-frequency network call,
+     * doesn't double its request count for the whole session. Sync-on-reconnect and
+     * the periodic SyncWorker pass must leave this false - staleness is plausible there.
      * @return Progress is now up to date
      */
-    suspend fun updateProgress(userMediaProgress: UserMediaProgress, retryCount: Int = 0): Boolean {
+    suspend fun updateProgress(
+        userMediaProgress: UserMediaProgress,
+        retryCount: Int = 0,
+        isPeriodicActiveSave: Boolean = false
+    ): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 if (BuildConfig.DEBUG) Thread.sleep(1000)
 
-                val serverProgress = getMediaProgress(userMediaProgress.libraryItemId)
+                if (ProgressSyncPolicy.shouldCheckServerBeforeUpload(isPeriodicActiveSave)) {
+                    val serverProgress = getMediaProgress(userMediaProgress.libraryItemId)
 
-                if (serverProgress != null && serverProgress.lastUpdate > userMediaProgress.lastUpdate) {
-                    Timber.d("Progress on server is more recent. Not uploading")
-                    userMediaProgress.toUpload = false
-                    insertLibraryItemToDB(userMediaProgress)
-                    return@withContext true
+                    if (serverProgress != null && serverProgress.lastUpdate > userMediaProgress.lastUpdate) {
+                        Timber.d("Progress on server is more recent. Not uploading")
+                        userMediaProgress.toUpload = false
+                        insertLibraryItemToDB(userMediaProgress)
+                        return@withContext true
+                    }
                 }
 
                 Timber.d("Uploading progress... (attempt ${retryCount + 1})")
@@ -206,7 +231,7 @@ class ApiHandler(private val context: Context) {
                     val delay = baseDelayMs * (1 shl retryCount) // Exponential backoff
                     Timber.d("Upload failed, retrying in ${delay}ms")
                     delay(delay)
-                    return@withContext updateProgress(userMediaProgress, retryCount + 1)
+                    return@withContext updateProgress(userMediaProgress, retryCount + 1, isPeriodicActiveSave)
                 }
 
                 return@withContext success
@@ -216,7 +241,7 @@ class ApiHandler(private val context: Context) {
                 if (retryCount < maxRetries) {
                     val delay = baseDelayMs * (1 shl retryCount)
                     delay(delay)
-                    return@withContext updateProgress(userMediaProgress, retryCount + 1)
+                    return@withContext updateProgress(userMediaProgress, retryCount + 1, isPeriodicActiveSave)
                 }
             }
 
@@ -262,10 +287,7 @@ class ApiHandler(private val context: Context) {
     }
 
     private suspend fun uploadProgress(userMediaProgress: UserMediaProgress): Boolean {
-        val jsonBody = JSONObject().apply {
-            put("currentTime", userMediaProgress.currentTime)
-            put("lastUpdate", userMediaProgress.lastUpdate)
-        }
+        val jsonBody = JSONObject(ProgressUploadBodyBuilder.buildBody(userMediaProgress))
 
         val requestBody =
             RequestBody.create("application/json".toMediaTypeOrNull(), jsonBody.toString())

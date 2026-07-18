@@ -2,5 +2,13 @@
   "protocol": "http",
   "serverAddress": "192.168.1.50:13378",
   "login": "your-username",
-  "password": "your-password"
+  "password": "your-password",
+  "jumpBackwardSeconds": 10,
+  "jumpForwardSeconds": 30,
+  "offlineMode": false,
+  "smartDeleteEnabled": true,
+  "smartDeleteMaxDownloads": 5,
+  "smartDeleteMaxBytes": 2000000000,
+  "bezelMode": "Scrub",
+  "tapToPlayEnabled": true
 }

@@ -3,7 +3,6 @@ package kaf.audiobookshelfwearos.app.activities
 import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -19,17 +18,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.outlined.CloudSync
-import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -78,8 +71,10 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.math.floor
 
@@ -225,16 +220,19 @@ class ChapterListActivity : ComponentActivity() {
                             Timber.d("Updated audiobook progress: ${audiobookProgress?.overallProgress}%")
                         }
                         
-                        // Update download states
-                        downloadedCount = libraryItem.media.tracks.count { track -> 
-                            track.isDownloaded(this@ChapterListActivity) 
+                        // Update download states: one downloadIndex.getDownload() read per
+                        // track (was up to three separate track.isDownloaded()/
+                        // isDownloading() scans above, each issuing its own SQLite lookup
+                        // for the same row), dispatched off the main thread since this is
+                        // synchronous disk I/O running inside a Compose collect callback.
+                        val statuses = withContext(Dispatchers.IO) {
+                            libraryItem.media.tracks.map { track ->
+                                MyDownloadService.getDownloadStatus(this@ChapterListActivity, track.id)
+                            }
                         }
-                        isDownloading = libraryItem.media.tracks.any { track ->
-                            track.isDownloading(this@ChapterListActivity)
-                        }
-                        isDownloaded = libraryItem.media.tracks.all { track -> 
-                            track.isDownloaded(this@ChapterListActivity) 
-                        }
+                        downloadedCount = statuses.count { it.isDownloaded }
+                        isDownloading = statuses.any { it.isDownloading }
+                        isDownloaded = statuses.all { it.isDownloaded }
                     }
                 }
             } catch (e: Exception) {
@@ -267,71 +265,41 @@ class ChapterListActivity : ComponentActivity() {
             }
         }
 
-        val isSyncing by viewModel.isSyncing.collectAsState()
-
         Column {
             Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = libraryItem.title,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
+            Row(
                 modifier = Modifier
-                    .padding(top = 15.dp, start = 30.dp, end = 30.dp)
                     .fillMaxWidth()
-            )
+                    .padding(top = 15.dp, start = 30.dp, end = 30.dp)
+                    .clickable {
+                        val intent = Intent(this@ChapterListActivity, BookManagementActivity::class.java)
+                        intent.putExtra("id", libraryItem.id)
+                        startActivity(intent)
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = libraryItem.title,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+                if (isDownloaded) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        tint = Color.Gray,
+                        imageVector = Icons.Filled.Done,
+                        contentDescription = "Downloaded",
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
 
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                // Download/Delete button
-                IconButton(onClick = {
-                    if (isDownloaded) {
-                        Toast.makeText(
-                            this@ChapterListActivity,
-                            "Audiobook deleted",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        for (track in libraryItem.media.tracks) {
-                            MyDownloadService.sendRemoveDownload(
-                                this@ChapterListActivity,
-                                track
-                            )
-                        }
-                        // Clear progress tracking
-                        trackProgresses.clear()
-                        audiobookProgress = null
-                        isDownloading = false
-                        isDownloaded = false
-                        downloadedCount = 0
-                    } else {
-                        Toast.makeText(
-                            this@ChapterListActivity,
-                            "Downloading started",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        for (track in libraryItem.media.tracks) {
-                            saveAudiobookToDB(libraryItem)
-                            MyDownloadService.sendAddDownload(
-                                this@ChapterListActivity,
-                                track
-                            )
-                        }
-                        isDownloading = true
-                    }
-                }) {
-                    Icon(
-                        tint = Color.Gray,
-                        imageVector = when {
-                            isDownloading -> Icons.Filled.Downloading
-                            isDownloaded -> Icons.Filled.Delete
-                            else -> Icons.Filled.Download
-                        },
-                        contentDescription = if (isDownloaded) "Delete" else "Download"
-                    )
-                }
-
                 // Progress information (optimized for circular screen)
                 if (isDownloading) {
                     val currentProgress = audiobookProgress
@@ -383,18 +351,8 @@ class ChapterListActivity : ComponentActivity() {
                         }
                     }
                 }
-
-                IconButton(onClick = {
-                    viewModel.sync(libraryItem)
-                }) {
-                    Icon(
-                        tint = if (!libraryItem.userProgress.toUpload || isSyncing) Color.Gray else Color.Yellow,
-                        imageVector = if (isSyncing) Icons.Outlined.CloudSync else if (libraryItem.userProgress.toUpload) Icons.Outlined.CloudUpload else Icons.Filled.Done,
-                        contentDescription = "Sync"
-                    )
-                }
             }
-            
+
             PlayButton(libraryItem)
             Spacer(modifier = Modifier.height(10.dp))
             HorizontalDivider(
@@ -411,6 +369,16 @@ class ChapterListActivity : ComponentActivity() {
 
     @Composable
     fun PlayButton(item: LibraryItem) {
+        // When this book is the one currently playing, there's nothing to
+        // "Start"/"Continue" -- the chapter rows below are already the tap
+        // target for seeking within it -- so render nothing here. A simple
+        // one-line id comparison; not extracted into its own function since
+        // there's no branching logic to unit test beyond the equality check
+        // itself.
+        if (item.id == PlayerService.currentlyPlayingItemId) {
+            return
+        }
+
         val buttonText = if (item.userProgress.currentTime > 10) "Continue" else "Start"
 
         Button(

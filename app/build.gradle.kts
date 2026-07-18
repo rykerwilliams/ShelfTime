@@ -28,9 +28,25 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // Committed so every debug build -- local or CI -- signs with the same
+            // key. Without this, AGP silently generates a random ~/.android/debug.keystore
+            // per machine, so a debug APK built on one CI runner can't be installed as
+            // an update over one built on a previous run: Android rejects it with
+            // "signatures do not match", forcing an uninstall (and losing local
+            // downloads/DB/login) on every single CI-built APK.
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
             enableUnitTestCoverage = true
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             isMinifyEnabled = false
