@@ -1,9 +1,12 @@
 package kaf.audiobookshelfwearos.app.screenshots
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Build
+import android.util.Log
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -33,13 +36,12 @@ import java.io.FileOutputStream
  * realistic-looking fake LibraryItems straight into Room (same pattern as
  * BookListActivityTapTest's seeding, so there's no dependency on a real
  * Audiobookshelf server), launches each key screen via ActivityScenario, and
- * captures a screenshot of each via UiAutomation.takeScreenshot() --
- * deliberately NOT the Compose UI testing APIs (createEmptyComposeRule(),
- * onNodeWithText(), etc.), which is the one dependency that caused
- * BookListActivityTapTest's unexplained "Failed to instantiate test runner
- * class" failures across four straight CI pushes. UiAutomation is part of
- * the core Android instrumentation framework (since API 18), not the
- * separate Compose testing artifact, so it carries none of that risk.
+ * captures a screenshot of each by drawing the activity's own decorView into
+ * a Bitmap via Canvas (see takeScreenshot()'s doc for why this replaced
+ * UiAutomation.takeScreenshot()). Deliberately NOT the Compose UI testing
+ * APIs (createEmptyComposeRule(), onNodeWithText(), etc.), which is the one
+ * dependency that caused BookListActivityTapTest's unexplained "Failed to
+ * instantiate test runner class" failures across four straight CI pushes.
  *
  * Excluded from the regular per-push instrumented-test job (see
  * build-apk.yml's `notClass` filter) since this doesn't assert anything --
@@ -145,20 +147,43 @@ class ScreenshotWalkTest {
         }
     }
 
-    private fun takeScreenshot(name: String) {
+    // A prior run on this project's headless CI emulator found zero PNGs
+    // anywhere on the device (checked /data, /sdcard, /storage with root adb)
+    // despite the test reporting 0 failures -- UiAutomation.takeScreenshot()
+    // has a quiet `?: return` and was silently returning null every time,
+    // almost certainly because this software-rendered emulator can't service
+    // a SurfaceFlinger frame-buffer readback (logcat showed repeated "Failed
+    // to find ColorBuffer" errors during the test run). Drawing the
+    // activity's own root View into a Bitmap via Canvas sidesteps the
+    // display/frame-buffer pipeline entirely and only depends on the View
+    // hierarchy actually being laid out, which it is after RESUMED.
+    private fun takeScreenshot(scenario: ActivityScenario<out Activity>, name: String) {
         // Give Compose a moment to finish rendering after the activity reaches
         // RESUMED -- there's no test-framework idling resource here (deliberately
         // avoiding the Compose testing APIs, see the class doc), so this is a
         // plain fixed delay rather than a poll-until-idle.
         Thread.sleep(2_000)
-        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-            ?: return
+        var bitmap: Bitmap? = null
+        scenario.onActivity { activity ->
+            val view = activity.window.decorView
+            val width = view.width
+            val height = view.height
+            if (width > 0 && height > 0) {
+                bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+                    view.draw(Canvas(it))
+                }
+            } else {
+                Log.e("ScreenshotWalkTest", "$name: decorView has zero size ($width x $height), skipping")
+            }
+        }
+        val captured = bitmap ?: return
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(targetContext.getExternalFilesDir(null), "screenshots")
         dir.mkdirs()
         FileOutputStream(File(dir, "$name.png")).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            captured.compress(Bitmap.CompressFormat.PNG, 100, out)
         }
+        Log.i("ScreenshotWalkTest", "$name: wrote screenshot to ${File(dir, "$name.png")}")
     }
 
     @Test
@@ -166,7 +191,7 @@ class ScreenshotWalkTest {
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
 
         ActivityScenario.launch(BookListActivity::class.java).use {
-            takeScreenshot("01_book_list")
+            takeScreenshot(it, "01_book_list")
         }
 
         // The "id" extra has to be on the launch Intent itself, not set on the
@@ -176,18 +201,18 @@ class ScreenshotWalkTest {
             Intent(targetContext, ChapterListActivity::class.java)
                 .putExtra("id", continueListeningItemId)
         ).use {
-            takeScreenshot("02_chapter_list")
+            takeScreenshot(it, "02_chapter_list")
         }
 
         ActivityScenario.launch<BookManagementActivity>(
             Intent(targetContext, BookManagementActivity::class.java)
                 .putExtra("id", continueListeningItemId)
         ).use {
-            takeScreenshot("03_book_management")
+            takeScreenshot(it, "03_book_management")
         }
 
         ActivityScenario.launch(SettingsActivity::class.java).use {
-            takeScreenshot("04_settings")
+            takeScreenshot(it, "04_settings")
         }
     }
 }
