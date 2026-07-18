@@ -75,21 +75,24 @@ jobs:
             mkdir -p docs/screenshots
             echo "===== logcat: ScreenshotWalkTest tag ====="
             adb logcat -d | grep -i "ScreenshotWalkTest" || echo "(no matching logcat lines)"
-            echo "===== adb root ====="
-            adb root || true
-            sleep 2
-            echo "===== ls -la / (top-level, in case getExternalFilesDir fell back to a relative path) ====="
-            adb shell ls -la / 2>&1 || true
-            echo "===== find *.png under /data (requires root) ====="
-            adb shell find /data -iname "*.png" 2>&1 || true
-            echo "===== find *.png under /sdcard ====="
-            adb shell find /sdcard -iname "*.png" 2>&1 || true
-            echo "===== find *.png under /storage ====="
-            adb shell find /storage -iname "*.png" 2>&1 || true
-            echo "===== attempting pull from private app files dir ====="
-            adb pull /data/data/kaf.audiobookshelfwearos/files/screenshots/. docs/screenshots/ || echo "pull from /data path failed"
-            echo "===== attempting pull from assumed external files dir ====="
-            adb pull /sdcard/Android/data/kaf.audiobookshelfwearos/files/screenshots/. docs/screenshots/ || echo "pull from /sdcard path failed"
+            # Confirmed via the logcat dump above that the app itself writes
+            # successfully to /storage/emulated/0/Android/data/<pkg>/files/screenshots/.
+            # Scoped storage (Android 11+) blocks shell/root from directly
+            # listing or pulling another app's /Android/data subtree -- even
+            # `adb root` couldn't see it in an earlier diagnostic run. The
+            # supported workaround is running the read as the app itself via
+            # `run-as`, streamed out as a tar so adb pull's per-file overhead
+            # (and its inability to use run-as at all) doesn't matter.
+            echo "===== pulling screenshots via run-as + tar ====="
+            adb exec-out run-as kaf.audiobookshelfwearos tar -cf - -C /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots . > /tmp/screenshots.tar 2>/tmp/screenshots_tar_err.txt
+            if [ -s /tmp/screenshots.tar ]; then
+              tar -xf /tmp/screenshots.tar -C docs/screenshots/
+              echo "extracted:"
+              ls -la docs/screenshots/
+            else
+              echo "run-as tar pull failed or produced an empty archive; stderr:"
+              cat /tmp/screenshots_tar_err.txt || true
+            fi
 
       - name: Commit and push screenshots
         run: |
