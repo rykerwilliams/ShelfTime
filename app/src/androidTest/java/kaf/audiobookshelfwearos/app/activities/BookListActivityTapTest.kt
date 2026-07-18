@@ -16,7 +16,6 @@ import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.Media
 import kaf.audiobookshelfwearos.app.data.Metadata
 import kaf.audiobookshelfwearos.app.data.UserMediaProgress
-import kaf.audiobookshelfwearos.app.services.PlayerService
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertNotEquals
@@ -67,7 +66,9 @@ class BookListActivityTapTest {
 
     @Before
     fun seedLibraryItemWithNoLocalTrackData() = runBlocking {
-        PlayerService.currentlyPlayingItemId = null
+        // currentlyPlayingItemId defaults to null and has a private setter (only
+        // PlayerService itself may change it); nothing else in this suite starts
+        // playback, so it's still null here without needing to touch it.
         database().libraryItemDao().insertLibraryItem(
             LibraryItem(
                 id = seededItemId,
