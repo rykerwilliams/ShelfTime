@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Search
@@ -88,6 +89,7 @@ import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.BookTapRouter
 import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
+import kaf.audiobookshelfwearos.app.utils.DownloadBudgetChecker
 import kaf.audiobookshelfwearos.app.utils.ItemTrackResolver
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kotlinx.coroutines.delay
@@ -486,26 +488,38 @@ class BookListActivity : ComponentActivity() {
      * Main-list row, wrapped in [SwipeToRevealCard] (§2's "complementary fast path" --
      * Google's recommended Wear OS pattern for reachable-without-opening-the-book
      * secondary/destructive actions: https://developer.android.com/design/ui/wear/guides/m2-5/components/swipe-to-reveal).
-     * Primary action is Download when the book isn't downloaded, Delete when it is.
-     * Deleting follows the library's own undo pattern (`undoPrimaryAction`) rather than
-     * a confirm dialog: committing the delete keeps the row revealed showing "Undo" for
-     * [UNDO_WINDOW_MILLIS], reverting (re-queues the download) if tapped in that window,
-     * or silently finalizing (nothing further to do -- the delete already ran) once the
-     * window elapses. No custom state machine was extracted for this: `RevealState`
-     * (from `androidx.wear.compose.material`) already tracks the covered/revealed/
-     * undo-visible transitions itself -- `revealState.currentValue`/`animateTo()` are
-     * the same primitives the library's own official sample
+     * Primary action is a three-state Download/Cancel/Delete: Download when not
+     * downloaded or downloading, Cancel (amber) while actively downloading, Delete
+     * (red) once complete. Cancel and Delete share one code path -- Media3's
+     * DownloadManager.removeDownload() cancels an in-flight download and deletes a
+     * completed one via the identical call.
+     * Deleting/cancelling follows the library's own undo pattern (`undoPrimaryAction`)
+     * rather than a confirm dialog: committing keeps the row revealed showing "Undo"
+     * for [UNDO_WINDOW_MILLIS], reverting (re-queues the download) if tapped in that
+     * window, or silently finalizing (nothing further to do -- the removal already
+     * ran) once the window elapses. No custom state machine was extracted for this:
+     * `RevealState` (from `androidx.wear.compose.material`) already tracks the
+     * covered/revealed/undo-visible transitions itself -- `revealState.currentValue`/
+     * `animateTo()` are the same primitives the library's own official sample
      * (`SwipeToRevealCardExpandable` in `androidx.wear.compose.integration.demos`) uses
-     * for this exact commit-then-auto-finalize-or-undo flow, so there is no bespoke
-     * pure logic here worth a JUnit seam -- the only per-row decision this code makes
-     * is a one-line "which action is primary" branch on `isDownloaded`, not a
-     * multi-step transition function.
+     * for this exact commit-then-auto-finalize-or-undo flow.
      */
     @OptIn(ExperimentalWearMaterialApi::class)
     @Composable
     private fun BookItem(item: LibraryItem) {
+        // The LibraryItem this row actually acts on: starts as the `item` param
+        // (which can be a track-less summary object for a never-before-touched
+        // book), and gets replaced with the full expanded item the first time
+        // resolveItemWithTracks() resolves one this session -- so cancel/delete and
+        // download-progress tracking below always have real track ids to work with,
+        // instead of the stale, empty summary list `item` itself never updates to.
+        var effectiveItem by remember(item.id) { mutableStateOf(item) }
+
         var isDownloaded by remember(item.id) {
             mutableStateOf(item.isDownloaded(this))
+        }
+        var isDownloading by remember(item.id) {
+            mutableStateOf(item.media.tracks.any { it.isDownloading(this) })
         }
         // Guards the download branch below against repeat taps while a request is
         // already in flight (resolveItemWithTracks()'s network fetch can take a few
@@ -515,9 +529,26 @@ class BookListActivity : ComponentActivity() {
         val revealState = rememberRevealState()
         val coroutineScope = rememberCoroutineScope()
 
-        // Auto-finalize a committed delete if "Undo" isn't tapped within the window --
-        // the delete already happened when the primary action fired, so finalizing here
-        // just closes the row back up; nothing further needs to run.
+        // Reactively updates isDownloading/isDownloaded off MyDownloadService's
+        // single shared DownloadManager.Listener-backed flow -- the same mechanism
+        // ChapterListActivity already uses -- instead of a per-row poll loop. State
+        // *transitions* (queued -> downloading -> completed) always fire through
+        // this flow; only continuous byte-level progress needs polling, which this
+        // row doesn't display.
+        LaunchedEffect(item.id) {
+            MyDownloadService.getProgressFlow().collect { progress ->
+                val trackIds = effectiveItem.media.tracks.map { it.id }
+                if (progress.trackId in trackIds) {
+                    val statuses = trackIds.map { MyDownloadService.getDownloadStatus(this@BookListActivity, it) }
+                    isDownloading = statuses.any { it.isDownloading }
+                    isDownloaded = statuses.isNotEmpty() && statuses.all { it.isDownloaded }
+                }
+            }
+        }
+
+        // Auto-finalize a committed delete/cancel if "Undo" isn't tapped within the
+        // window -- the removal already happened when the primary action fired, so
+        // finalizing here just closes the row back up; nothing further needs to run.
         LaunchedEffect(revealState.currentValue) {
             if (revealState.currentValue == RevealValue.RightRevealed && !isDownloaded) {
                 delay(UNDO_WINDOW_MILLIS)
@@ -528,12 +559,19 @@ class BookListActivity : ComponentActivity() {
         }
 
         val onPrimaryAction: () -> Unit = {
-            if (isDownloaded) {
-                deleteItem(item)
+            if (isDownloaded || isDownloading) {
+                deleteItem(effectiveItem)
                 isDownloaded = false
+                isDownloading = false
                 // Keep the row revealed so the undoPrimaryAction slot (below) shows.
                 coroutineScope.launch { revealState.animateTo(RevealValue.RightRevealed) }
-            } else if (!isRequestingDownload) {
+            } else if (isRequestingDownload) {
+                Toast.makeText(
+                    this@BookListActivity,
+                    "Download already in progress",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
                 isRequestingDownload = true
                 // See resolveItemWithTracks() -- a never-locally-touched book's main-list
                 // item can have an empty media.tracks, which silently no-ops
@@ -549,12 +587,40 @@ class BookListActivity : ComponentActivity() {
                                 Toast.LENGTH_SHORT
                             ).show()
                         } else {
-                            downloadItem(fullItem)
-                            Toast.makeText(
-                                this@BookListActivity,
-                                "Download started",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            effectiveItem = fullItem
+                            val userDataManager = UserDataManager(this@BookListActivity)
+                            val wouldExceedLimit = userDataManager.smartDeleteEnabled && run {
+                                val db = (applicationContext as MainApp).database
+                                val downloadedItems = db.libraryItemDao().getAllLibraryItems()
+                                    .filter { it.isDownloaded(this@BookListActivity) }
+                                DownloadBudgetChecker.wouldExceedLimit(
+                                    currentCount = downloadedItems.size,
+                                    currentTotalBytes = downloadedItems.sumOf { it.media.size },
+                                    newItemBytes = fullItem.media.size,
+                                    maxDownloads = userDataManager.smartDeleteMaxDownloads,
+                                    maxTotalBytes = userDataManager.smartDeleteMaxBytes
+                                )
+                            }
+                            if (wouldExceedLimit) {
+                                // Deliberately blocks rather than auto-evicting like
+                                // SmartDeleteManager's after-a-download cleanup does --
+                                // starting a brand new download while already over
+                                // budget means the user clears space manually rather
+                                // than the app silently choosing what to delete.
+                                Toast.makeText(
+                                    this@BookListActivity,
+                                    "Download would exceed your storage limit -- delete something first",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                downloadItem(fullItem)
+                                isDownloading = true
+                                Toast.makeText(
+                                    this@BookListActivity,
+                                    "Download started",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     } finally {
                         isRequestingDownload = false
@@ -572,9 +638,15 @@ class BookListActivity : ComponentActivity() {
             colors = SwipeToRevealDefaults.actionColors(
                 // Default primaryActionBackgroundColor is MaterialTheme.colors.error
                 // (red) regardless of which action occupies the slot, so Download
-                // rendered just as red as Delete. Match the green/red convention
-                // BookManagementActivity already uses for the same two actions.
-                primaryActionBackgroundColor = if (isDownloaded) Color(0xFF8B0000) else Color(0xFF086409),
+                // rendered just as red as Delete. Match the green/amber/red
+                // convention: green to start, amber while in flight (Cancel), red
+                // once complete (Delete) -- BookManagementActivity uses the same
+                // green/red pair for its two-state equivalent.
+                primaryActionBackgroundColor = when {
+                    isDownloaded -> Color(0xFF8B0000)
+                    isDownloading -> Color(0xFFB8860B)
+                    else -> Color(0xFF086409)
+                },
                 primaryActionContentColor = Color.White
             ),
             primaryAction = {
@@ -583,20 +655,36 @@ class BookListActivity : ComponentActivity() {
                     onClick = onPrimaryAction,
                     icon = {
                         Icon(
-                            imageVector = if (isDownloaded) Icons.Filled.Delete else Icons.Filled.Download,
-                            contentDescription = if (isDownloaded) "Delete" else "Download"
+                            imageVector = when {
+                                isDownloaded -> Icons.Filled.Delete
+                                isDownloading -> Icons.Filled.Close
+                                else -> Icons.Filled.Download
+                            },
+                            contentDescription = when {
+                                isDownloaded -> "Delete"
+                                isDownloading -> "Cancel"
+                                else -> "Download"
+                            }
                         )
                     },
-                    label = { Text(if (isDownloaded) "Delete" else "Download") }
+                    label = {
+                        Text(
+                            when {
+                                isDownloaded -> "Delete"
+                                isDownloading -> "Cancel"
+                                else -> "Download"
+                            }
+                        )
+                    }
                 )
             },
             undoPrimaryAction = {
                 SwipeToRevealUndoAction(
                     revealState = revealState,
                     onClick = {
-                        // Undo the delete: re-queue the download and close the row.
-                        downloadItem(item)
-                        isDownloaded = true
+                        // Undo the removal: re-queue the download and close the row.
+                        downloadItem(effectiveItem)
+                        isDownloading = true
                         coroutineScope.launch { revealState.animateTo(RevealValue.Covered) }
                     },
                     label = { Text("Undo") }
