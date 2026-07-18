@@ -15,6 +15,7 @@ import kaf.audiobookshelfwearos.app.data.Library
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.User
 import kaf.audiobookshelfwearos.app.utils.LibrarySearchFilter
+import kaf.audiobookshelfwearos.app.utils.NetworkRefreshPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -44,9 +45,6 @@ class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
 
     private val _coverImages = MutableLiveData<Map<String, Bitmap>>()
     val coverImages: LiveData<Map<String, Bitmap>> get() = _coverImages
-
-    private val _isSyncing = MutableStateFlow(false)
-    val isSyncing: StateFlow<Boolean> = _isSyncing
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -167,19 +165,6 @@ class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
         }
     }
 
-    fun sync(item: LibraryItem) {
-        _isSyncing.value = true
-        viewModelScope.launch {
-            val newItem =
-                item.copy(userMediaProgress = item.userProgress.copy(toUpload = !item.userProgress.toUpload))
-            val updated = apiHandler.updateProgress(newItem.userProgress)
-            if (updated) {
-                _item.postValue(newItem)
-            }
-            _isSyncing.value = false
-        }
-    }
-
     fun getLibraries(
         context: Context,
         includeLocalProgress: Boolean = true,
@@ -207,18 +192,20 @@ class ApiViewModel(private val apiHandler: ApiHandler) : ViewModel() {
                 _isLoading.value = false
             }
 
-            val res = loadLibraries(onlyDownloaded, context)
-            for (library in res) {
-                library.libraryItems.removeAll { item2 -> localItems.any { item1 -> item1.id == item2.id } }
-                allLibraries.add(library)
-            }
-            _isLoading.value = false
-            _libraries.postValue(allLibraries)
-            // Update filtered libraries when libraries change
-            if (_searchQuery.value.isBlank()) {
-                _filteredLibraries.value = allLibraries
-            } else {
-                filterLibraries(_searchQuery.value)
+            if (NetworkRefreshPolicy.shouldAttemptNetworkRefresh(onlyDownloaded)) {
+                val res = loadLibraries(onlyDownloaded, context)
+                for (library in res) {
+                    library.libraryItems.removeAll { item2 -> localItems.any { item1 -> item1.id == item2.id } }
+                    allLibraries.add(library)
+                }
+                _isLoading.value = false
+                _libraries.postValue(allLibraries)
+                // Update filtered libraries when libraries change
+                if (_searchQuery.value.isBlank()) {
+                    _filteredLibraries.value = allLibraries
+                } else {
+                    filterLibraries(_searchQuery.value)
+                }
             }
         }
     }

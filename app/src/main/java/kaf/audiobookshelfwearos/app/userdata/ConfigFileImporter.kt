@@ -11,8 +11,34 @@ data class SideloadConfig(
     val protocol: String? = null,
     val serverAddress: String? = null,
     val login: String? = null,
-    val password: String? = null
+    val password: String? = null,
+    val jumpBackwardSeconds: Int? = null,
+    val jumpForwardSeconds: Int? = null
 )
+
+/**
+ * Pure result of merging a [SideloadConfig] against the currently-persisted credential
+ * values. Credential-style fields (`protocol`/`serverAddress`/`login`/`password`) are
+ * one-time secrets, so they're only populated here if the corresponding "current" value
+ * passed in was empty. `jumpBackwardSeconds`/`jumpForwardSeconds` are preference
+ * defaults, not secrets, so they pass through unconditionally whenever present in the
+ * config -- a user may legitimately want to re-push the config file to change them.
+ *
+ * Kept free of any Context/SharedPreferences dependency so the merge logic itself is
+ * unit-testable without needing a real UserDataManager.
+ */
+data class ConfigApplicationResult(
+    val protocol: String? = null,
+    val serverAddress: String? = null,
+    val login: String? = null,
+    val password: String? = null,
+    val jumpBackwardSeconds: Int? = null,
+    val jumpForwardSeconds: Int? = null
+) {
+    val anyApplied: Boolean
+        get() = serverAddress != null || login != null || password != null ||
+            jumpBackwardSeconds != null || jumpForwardSeconds != null
+}
 
 /**
  * Lets a sideloaded build be pre-configured by pushing a JSON file to the app's own
@@ -25,9 +51,49 @@ object ConfigFileImporter {
     private val mapper = jacksonObjectMapper()
 
     /**
-     * Applies the config file if present. Only fills in fields the user hasn't already
-     * set (never overwrites an existing configuration), and deletes the file afterward
-     * so the plaintext password doesn't linger on disk.
+     * Pure merge logic: decides which fields from [config] should be applied given the
+     * currently-persisted credential values. No Context/UserDataManager dependency, so
+     * this is unit-testable directly.
+     */
+    fun resolveUpdates(
+        config: SideloadConfig,
+        currentServerAddress: String,
+        currentLogin: String,
+        currentPassword: String
+    ): ConfigApplicationResult {
+        var protocol: String? = null
+        var serverAddress: String? = null
+        var login: String? = null
+        var password: String? = null
+
+        if (currentServerAddress.isEmpty()) {
+            protocol = config.protocol
+            serverAddress = config.serverAddress
+        }
+        if (currentLogin.isEmpty()) {
+            login = config.login
+        }
+        if (currentPassword.isEmpty()) {
+            password = config.password
+        }
+
+        return ConfigApplicationResult(
+            protocol = protocol,
+            serverAddress = serverAddress,
+            login = login,
+            password = password,
+            // Preference defaults, not one-time secrets -- apply unconditionally
+            // whenever present, unlike the credential fields above.
+            jumpBackwardSeconds = config.jumpBackwardSeconds,
+            jumpForwardSeconds = config.jumpForwardSeconds
+        )
+    }
+
+    /**
+     * Applies the config file if present. Credential fields only fill in if the user
+     * hasn't already set them (never overwrites an existing configuration); the jump-
+     * seconds preference defaults apply unconditionally whenever present. Deletes the
+     * file afterward either way, so the plaintext password doesn't linger on disk.
      *
      * @return true if any field was applied from the file.
      */
@@ -37,29 +103,21 @@ object ConfigFileImporter {
 
         return try {
             val config = mapper.readValue(configFile, SideloadConfig::class.java)
-            var applied = false
+            val resolved = resolveUpdates(
+                config,
+                currentServerAddress = userDataManager.serverAddress,
+                currentLogin = userDataManager.login,
+                currentPassword = userDataManager.password
+            )
 
-            if (userDataManager.serverAddress.isEmpty()) {
-                config.protocol?.let { userDataManager.protocol = it }
-                config.serverAddress?.let {
-                    userDataManager.serverAddress = it
-                    applied = true
-                }
-            }
-            if (userDataManager.login.isEmpty()) {
-                config.login?.let {
-                    userDataManager.login = it
-                    applied = true
-                }
-            }
-            if (userDataManager.password.isEmpty()) {
-                config.password?.let {
-                    userDataManager.password = it
-                    applied = true
-                }
-            }
+            resolved.protocol?.let { userDataManager.protocol = it }
+            resolved.serverAddress?.let { userDataManager.serverAddress = it }
+            resolved.login?.let { userDataManager.login = it }
+            resolved.password?.let { userDataManager.password = it }
+            resolved.jumpBackwardSeconds?.let { userDataManager.jumpBackwardSeconds = it }
+            resolved.jumpForwardSeconds?.let { userDataManager.jumpForwardSeconds = it }
 
-            applied
+            resolved.anyApplied
         } catch (e: Exception) {
             Timber.e(e, "Failed to import sideload config")
             false

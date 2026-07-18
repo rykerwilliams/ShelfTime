@@ -18,18 +18,24 @@ import kaf.audiobookshelfwearos.app.data.Chapter
  *
  * Chapter boundaries are start-inclusive, end-exclusive, matching the loop this was
  * extracted from. If no chapter contains the position (before the first chapter's
- * start, or after the last chapter's end), returns the empty-title default — the same
- * fallback `Chapter()` already produced.
+ * start, or after the last chapter's end), `currentChapterTitle` returns the
+ * empty-title default — the same fallback `Chapter()` already produced — while
+ * `currentChapter` returns `null`, since callers of that function need to be able to
+ * tell "no chapter here" apart from "chapter with an empty title".
  */
 object ChapterResolver {
 
     fun currentChapterTitle(positionSeconds: Double, chapters: List<Chapter>): String {
-        var currentChapter = Chapter()
+        return currentChapter(positionSeconds, chapters)?.title ?: Chapter().title
+    }
+
+    fun currentChapter(positionSeconds: Double, chapters: List<Chapter>): Chapter? {
+        var currentChapter: Chapter? = null
         for (chapter in chapters) {
             if (positionSeconds >= chapter.start && positionSeconds < chapter.end) {
                 currentChapter = chapter
             }
         }
-        return currentChapter.title
+        return currentChapter
     }
 }

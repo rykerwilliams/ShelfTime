@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -34,7 +37,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -53,25 +59,47 @@ import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.CircularProgressIndicator
+import androidx.wear.compose.material.ExperimentalWearMaterialApi
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.PositionIndicator
+import androidx.wear.compose.material.RevealValue
 import androidx.wear.compose.material.Scaffold
+import androidx.wear.compose.material.SwipeToRevealCard
+import androidx.wear.compose.material.SwipeToRevealPrimaryAction
+import androidx.wear.compose.material.SwipeToRevealUndoAction
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.Vignette
 import androidx.wear.compose.material.VignettePosition
+import androidx.wear.compose.material.rememberRevealState
 import androidx.wear.input.RemoteInputIntentHelper
 import androidx.wear.input.wearableExtender
 import coil.compose.AsyncImage
 import kaf.audiobookshelfwearos.R
 import kaf.audiobookshelfwearos.app.ApiHandler
+import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.data.Library
 import kaf.audiobookshelfwearos.app.data.LibraryItem
+import kaf.audiobookshelfwearos.app.services.MyDownloadService
+import kaf.audiobookshelfwearos.app.services.PlayerService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
+import kaf.audiobookshelfwearos.app.utils.BookTapRouter
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 class BookListActivity : ComponentActivity() {
+    companion object {
+        /**
+         * How long the swipe-to-reveal "Undo" affordance stays up after a delete is
+         * committed before silently finalizing (§2's "official SwipeToReveal undo
+         * pattern" -- a few seconds, matching the order of magnitude used by
+         * `androidx.wear.compose.integration.demos`' own SwipeToReveal sample).
+         */
+        private const val UNDO_WINDOW_MILLIS = 5000L
+    }
+
     private val viewModel: ApiViewModel by viewModels {
         ApiViewModel.ApiViewModelFactory(
             ApiHandler(
@@ -376,37 +404,148 @@ class BookListActivity : ComponentActivity() {
         }
     }
 
+    private fun saveAudiobookToDB(item: LibraryItem) {
+        lifecycleScope.launch {
+            val db = (applicationContext as MainApp).database
+            db.libraryItemDao().insertLibraryItem(item)
+        }
+    }
+
+    /** Queues every track of [item] for download via [MyDownloadService]. */
+    private fun downloadItem(item: LibraryItem) {
+        for (track in item.media.tracks) {
+            MyDownloadService.sendAddDownload(this, track)
+        }
+    }
+
+    /** Removes every downloaded track of [item] via [MyDownloadService]. */
+    private fun deleteItem(item: LibraryItem) {
+        for (track in item.media.tracks) {
+            MyDownloadService.sendRemoveDownload(this, track)
+        }
+    }
+
+    /**
+     * Main-list row, wrapped in [SwipeToRevealCard] (§2's "complementary fast path" --
+     * Google's recommended Wear OS pattern for reachable-without-opening-the-book
+     * secondary/destructive actions: https://developer.android.com/design/ui/wear/guides/m2-5/components/swipe-to-reveal).
+     * Primary action is Download when the book isn't downloaded, Delete when it is.
+     * Deleting follows the library's own undo pattern (`undoPrimaryAction`) rather than
+     * a confirm dialog: committing the delete keeps the row revealed showing "Undo" for
+     * [UNDO_WINDOW_MILLIS], reverting (re-queues the download) if tapped in that window,
+     * or silently finalizing (nothing further to do -- the delete already ran) once the
+     * window elapses. No custom state machine was extracted for this: `RevealState`
+     * (from `androidx.wear.compose.material`) already tracks the covered/revealed/
+     * undo-visible transitions itself -- `revealState.currentValue`/`animateTo()` are
+     * the same primitives the library's own official sample
+     * (`SwipeToRevealCardExpandable` in `androidx.wear.compose.integration.demos`) uses
+     * for this exact commit-then-auto-finalize-or-undo flow, so there is no bespoke
+     * pure logic here worth a JUnit seam -- the only per-row decision this code makes
+     * is a one-line "which action is primary" branch on `isDownloaded`, not a
+     * multi-step transition function.
+     */
+    @OptIn(ExperimentalWearMaterialApi::class)
     @Composable
     private fun BookItem(item: LibraryItem) {
-        Column(modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                val intent = Intent(this, ChapterListActivity::class.java).apply {
-                    putExtra(
-                        "id",
-                        item.id
-                    )
+        var isDownloaded by remember(item.id) {
+            mutableStateOf(item.isDownloaded(this))
+        }
+        val revealState = rememberRevealState()
+        val coroutineScope = rememberCoroutineScope()
+
+        // Auto-finalize a committed delete if "Undo" isn't tapped within the window --
+        // the delete already happened when the primary action fired, so finalizing here
+        // just closes the row back up; nothing further needs to run.
+        LaunchedEffect(revealState.currentValue) {
+            if (revealState.currentValue == RevealValue.RightRevealed && !isDownloaded) {
+                delay(UNDO_WINDOW_MILLIS)
+                if (revealState.currentValue == RevealValue.RightRevealed) {
+                    revealState.animateTo(RevealValue.Covered)
                 }
-                startActivity(intent)
             }
-            .padding(16.dp)) {
-            CoverImage(itemId = item.id)
-            Text(
-                text = item.title,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .padding(start = 10.dp, end = 10.dp)
-                    .fillMaxWidth()
-            )
-            Text(
-                text = item.author,
-                fontSize = 10.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .padding(start = 10.dp, end = 10.dp)
-                    .fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        val onPrimaryAction: () -> Unit = {
+            if (isDownloaded) {
+                deleteItem(item)
+                isDownloaded = false
+                // Keep the row revealed so the undoPrimaryAction slot (below) shows.
+                coroutineScope.launch { revealState.animateTo(RevealValue.RightRevealed) }
+            } else {
+                downloadItem(item)
+                // No undo affordance for starting a download -- close the row back up.
+                coroutineScope.launch { revealState.animateTo(RevealValue.Covered) }
+            }
+        }
+
+        SwipeToRevealCard(
+            revealState = revealState,
+            onFullSwipe = onPrimaryAction,
+            primaryAction = {
+                SwipeToRevealPrimaryAction(
+                    revealState = revealState,
+                    onClick = onPrimaryAction,
+                    icon = {
+                        Icon(
+                            imageVector = if (isDownloaded) Icons.Filled.Delete else Icons.Filled.Download,
+                            contentDescription = if (isDownloaded) "Delete" else "Download"
+                        )
+                    },
+                    label = { Text(if (isDownloaded) "Delete" else "Download") }
+                )
+            },
+            undoPrimaryAction = {
+                SwipeToRevealUndoAction(
+                    revealState = revealState,
+                    onClick = {
+                        // Undo the delete: re-queue the download and close the row.
+                        downloadItem(item)
+                        isDownloaded = true
+                        coroutineScope.launch { revealState.animateTo(RevealValue.Covered) }
+                    },
+                    label = { Text("Undo") }
+                )
+            }
+        ) {
+            Column(modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    if (BookTapRouter.shouldJumpStraightToPlayback(PlayerService.currentlyPlayingItemId)) {
+                        // Nothing is currently playing: skip the chapter/detail screen and
+                        // jump straight into playback for the tapped book.
+                        saveAudiobookToDB(item)
+                        PlayerService.setAudiobook(this, item, action = "continue")
+                        val intent = Intent(this, PlayerActivity::class.java)
+                        startActivity(intent)
+                    } else {
+                        val intent = Intent(this, ChapterListActivity::class.java).apply {
+                            putExtra(
+                                "id",
+                                item.id
+                            )
+                        }
+                        startActivity(intent)
+                    }
+                }
+                .padding(16.dp)) {
+                CoverImage(itemId = item.id)
+                Text(
+                    text = item.title,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(start = 10.dp, end = 10.dp)
+                        .fillMaxWidth()
+                )
+                Text(
+                    text = item.author,
+                    fontSize = 10.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(start = 10.dp, end = 10.dp)
+                        .fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+            }
         }
     }
 

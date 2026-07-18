@@ -28,6 +28,7 @@ import kaf.audiobookshelfwearos.R
 import kaf.audiobookshelfwearos.app.ApiHandler
 import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.activities.PlayerActivity
+import kaf.audiobookshelfwearos.app.data.Chapter
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.room.AppDatabase
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
@@ -35,6 +36,7 @@ import kaf.audiobookshelfwearos.app.utils.ChapterResolver
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kaf.audiobookshelfwearos.app.utils.PerformanceLogger
 import kaf.audiobookshelfwearos.app.utils.PlayerBroadcastActions
+import kaf.audiobookshelfwearos.app.utils.SleepTimerCalculator
 import kaf.audiobookshelfwearos.app.utils.TrackPositionResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +49,18 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.math.abs
 
+
+// The sleep-timer cycle's current selection (docs/UI_CHANGES_PLAN.md section 5). Off/
+// Minutes existed implicitly before as "no sleepTimerJob scheduled" / "a fixed-delay
+// sleepTimerJob"; EndOfChapter is the new option. PlayerService tracks which one is
+// active so the recompute-and-reschedule hooks below (seek/speed-change/pause-resume)
+// know whether to act -- they're no-ops unless EndOfChapter is the active option, and
+// must never affect the plain Minutes behavior.
+sealed class SleepTimerOption {
+    object Off : SleepTimerOption()
+    data class Minutes(val minutes: Int) : SleepTimerOption()
+    object EndOfChapter : SleepTimerOption()
+}
 
 class PlayerService : MediaSessionService() {
 
@@ -63,7 +77,6 @@ class PlayerService : MediaSessionService() {
     private var totalPlaybackTime: Long = 0
     private var pausedAtMs: Long = 0L
     private val REWIND_ON_RESUME_MS = 3000L
-    private val SKIP_SECONDS = 10.0
     private val MIN_PAUSE_DURATION_TO_REWIND_MS = 3000L
     private var ONGOING_NOTIFICATION_ID: Int = 151
     private var CHANNEL_NAME: String = "Player"
@@ -316,6 +329,12 @@ class PlayerService : MediaSessionService() {
                     playbackStartTime = System.currentTimeMillis()
                     startPeriodicProgressSaving()
                     sendBroadcast(Intent("$packageName.${PlayerBroadcastActions.PLAYING}"))
+                    // "Sleep at end of chapter" recompute-and-reschedule hook (3/3, resume
+                    // half) -- see docs/UI_CHANGES_PLAN.md section 5. A plain delay() keeps
+                    // counting in wall-clock time even while paused, so this recomputes
+                    // from the actual position at resume instead of trusting a schedule
+                    // that may have kept running. No-op unless EndOfChapter is armed.
+                    recomputeSleepAtChapterEndIfArmed()
                 } else {
                     Timber.tag("PlayerService").d("ExoPlayer is paused")
                     pausedAtMs = System.currentTimeMillis()
@@ -326,6 +345,24 @@ class PlayerService : MediaSessionService() {
                     totalPlaybackTime += currentTime - playbackStartTime
                     Timber.tag("PlayerService")
                         .d("%s seconds", "Total playback time: ${totalPlaybackTime / 1000}")
+                    // "Sleep at end of chapter" recompute-and-reschedule hook (3/3, pause
+                    // half) -- cancel the scheduled delay while paused so it doesn't keep
+                    // counting down in wall-clock time. No-op unless EndOfChapter is armed.
+                    cancelSleepAtChapterEndScheduleIfArmed()
+                }
+            }
+
+            // "Sleep at end of chapter" recompute-and-reschedule hook (1/3) -- fires on
+            // rewind/fast-forward/chapter-tap seeks (and any other explicit seek). No-op
+            // unless EndOfChapter is armed; the minutes-based sleep timer is untouched.
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                super.onPositionDiscontinuity(oldPosition, newPosition, reason)
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    recomputeSleepAtChapterEndIfArmed()
                 }
             }
         })
@@ -463,7 +500,21 @@ class PlayerService : MediaSessionService() {
         return ChapterResolver.currentChapterTitle(timeInS, audiobook.media.chapters)
     }
 
-    private fun getCurrentTotalPositionInS(): Double {
+    // Same seam as getCurrentChapterTitle() above, but returns the full Chapter
+    // (start/end/title) instead of just the title, so callers (e.g. PlaybackControls'
+    // chapter-relative time display) can compute elapsed/remaining time within the
+    // current chapter without re-deriving chapter boundaries themselves.
+    fun getCurrentChapter(): Chapter? {
+        val timeInS = getCurrentTotalPositionInS() + START_OFFSET_SECONDS + 1
+        return ChapterResolver.currentChapter(timeInS, audiobook.media.chapters)
+    }
+
+    // Public: PlayerActivity's chapter-relative time display (backlog item 4) needs
+    // this in the same absolute-book-timeline coordinate space chapter.start/end use
+    // -- getCurrentPosition() below is exoPlayer.currentPosition, which resets to
+    // near-zero at every track boundary and is wrong to combine with chapter
+    // boundaries for any multi-track (multi-file) audiobook.
+    fun getCurrentTotalPositionInS(): Double {
         if (audiobook.media.tracks.isEmpty())
             return 0.0
         val track = audiobook.media.tracks[exoPlayer.currentMediaItemIndex]
@@ -475,7 +526,11 @@ class PlayerService : MediaSessionService() {
     // TrackPositionResolver instead of Player.seekTo(long)'s single-argument overload,
     // which only seeks within the current MediaItem and silently clamps/truncates a
     // skip that would land in the adjacent track (backlog item 7).
-    private fun seekRelativeSeconds(deltaSeconds: Double) {
+    // Public (not private) so PlaybackControls' rotary-bezel scrub handler (§7) can
+    // call it directly with an arbitrary delta, rather than being limited to the
+    // fixed jumpBackwardSeconds/jumpForwardSeconds amounts the ACTION_REWIND/
+    // ACTION_FAST_FORWARD intents use.
+    fun seekRelativeSeconds(deltaSeconds: Double) {
         if (audiobook.media.tracks.isEmpty()) {
             // No track metadata resolved yet — fall back to a plain in-item seek.
             exoPlayer.seekTo((exoPlayer.currentPosition + (deltaSeconds * 1000).toLong()).coerceAtLeast(0))
@@ -569,11 +624,11 @@ class PlayerService : MediaSessionService() {
             }
 
             "ACTION_REWIND" -> {
-                seekRelativeSeconds(-SKIP_SECONDS) // Rewind 10 seconds, crossing track boundaries
+                seekRelativeSeconds(-userDataManager.jumpBackwardSeconds.toDouble()) // Rewind, crossing track boundaries
             }
 
             "ACTION_FAST_FORWARD" -> {
-                seekRelativeSeconds(SKIP_SECONDS) // Fast forward 10 seconds, crossing track boundaries
+                seekRelativeSeconds(userDataManager.jumpForwardSeconds.toDouble()) // Fast forward, crossing track boundaries
             }
         }
 
@@ -639,11 +694,17 @@ class PlayerService : MediaSessionService() {
     fun setSpeed(speed: Float) {
         exoPlayer.setPlaybackSpeed(speed)
         userDataManager.speed = speed
+        // "Sleep at end of chapter" recompute-and-reschedule hook (2/3) -- a delay
+        // computed at the old speed is wrong once speed changes. No-op unless
+        // EndOfChapter is armed; see docs/UI_CHANGES_PLAN.md section 5.
+        recomputeSleepAtChapterEndIfArmed()
     }
 
     private var sleepTimerJob: Job? = null
+    private var sleepTimerOption: SleepTimerOption = SleepTimerOption.Off
 
     fun setSleepTimer(minutes: Int) {
+        sleepTimerOption = SleepTimerOption.Minutes(minutes)
         sleepTimerJob?.cancel()
         sleepTimerJob = scope.launch {
             delay(minutes * 60_000L)
@@ -654,8 +715,81 @@ class PlayerService : MediaSessionService() {
     }
 
     fun cancelSleepTimer() {
+        sleepTimerOption = SleepTimerOption.Off
         sleepTimerJob?.cancel()
         sleepTimerJob = null
+    }
+
+    // "Sleep at end of chapter" (docs/UI_CHANGES_PLAN.md section 5). Unlike the plain
+    // minutes preset, a delay computed once here would drift out of sync with the
+    // actual chapter boundary whenever a seek, a speed change, or a pause/resume
+    // breaks the assumption that wall-clock time and playback-position time move
+    // together at a fixed rate -- so this is deliberately recompute-and-reschedule
+    // (see scheduleSleepAtChapterEnd() call sites below), not a single delay() like
+    // the minutes-based timer.
+    fun setSleepTimerAtChapterEnd() {
+        sleepTimerOption = SleepTimerOption.EndOfChapter
+        scheduleSleepAtChapterEnd()
+    }
+
+    // Computes the current chapter's remaining time (speed-adjusted, via the pure
+    // SleepTimerCalculator) and (re)schedules a single delay() to pause playback when
+    // it elapses. Safe to call repeatedly -- always cancels whatever was previously
+    // scheduled first. If there's no current chapter to anchor to (e.g. no chapter
+    // metadata for this book), the schedule is simply cleared rather than firing an
+    // arbitrary/incorrect delay.
+    private fun scheduleSleepAtChapterEnd() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+
+        val chapter = getCurrentChapter() ?: return
+        // getCurrentChapter() resolves against chapter boundaries using this same
+        // START_OFFSET_SECONDS + 1 adjusted position (see getCurrentChapter()/
+        // getCurrentChapterTitle() above) -- chapter.start/chapter.end live in that
+        // offset coordinate space, so the position fed into secondsUntilChapterEnd()
+        // must match it, or the computed remaining time is off by (START_OFFSET_SECONDS
+        // + 1) / speed seconds.
+        val positionSeconds = getCurrentTotalPositionInS() + START_OFFSET_SECONDS + 1
+        val delaySeconds = SleepTimerCalculator.secondsUntilChapterEnd(
+            positionSeconds,
+            chapter.end,
+            exoPlayer.playbackParameters.speed
+        )
+
+        if (delaySeconds <= 0.0) {
+            // Already at/past the chapter boundary (e.g. seeked past it while this was
+            // being armed) -- pause immediately rather than scheduling a non-positive
+            // delay.
+            exoPlayer.pause()
+            return
+        }
+
+        sleepTimerJob = scope.launch {
+            delay((delaySeconds * 1000).toLong())
+            withContext(Dispatchers.Main) {
+                exoPlayer.pause()
+            }
+        }
+    }
+
+    // Shared guard for the three recompute-and-reschedule hooks (seek discontinuity,
+    // speed change, resume-from-pause) -- all are no-ops unless "sleep at end of
+    // chapter" is the currently active sleep-timer option, so none of this touches the
+    // existing minutes-based sleep timer path.
+    private fun recomputeSleepAtChapterEndIfArmed() {
+        if (sleepTimerOption == SleepTimerOption.EndOfChapter) {
+            scheduleSleepAtChapterEnd()
+        }
+    }
+
+    // Pause half of hook (3/3) -- see onIsPlayingChanged(false) above. Cancels the
+    // scheduled delay without touching sleepTimerOption, so resume can tell this mode
+    // is still armed and recompute-and-reschedule from the position at that point.
+    private fun cancelSleepAtChapterEndScheduleIfArmed() {
+        if (sleepTimerOption == SleepTimerOption.EndOfChapter) {
+            sleepTimerJob?.cancel()
+            sleepTimerJob = null
+        }
     }
 
     companion object {

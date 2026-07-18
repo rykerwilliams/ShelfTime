@@ -48,7 +48,8 @@ class SmartDeleteManager(context: Context) {
             val itemsToDelete = SmartDeleteSelector.selectItemsToDelete(
                 itemsWithDownloadInfo,
                 PlayerService.currentlyPlayingItemId,
-                userDataManager.smartDeleteMaxDownloads
+                userDataManager.smartDeleteMaxDownloads,
+                userDataManager.smartDeleteMaxBytes
             )
             Timber.d("Smart delete: ${itemsToDelete.size} item(s) to remove")
 

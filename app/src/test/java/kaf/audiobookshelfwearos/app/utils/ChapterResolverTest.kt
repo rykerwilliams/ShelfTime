@@ -2,6 +2,7 @@ package kaf.audiobookshelfwearos.app.utils
 
 import kaf.audiobookshelfwearos.app.data.Chapter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ChapterResolverTest {
@@ -79,5 +80,53 @@ class ChapterResolverTest {
         val title = ChapterResolver.currentChapterTitle(positionInsideLastTrack, chapters)
 
         assertEquals("Chapter 3", title)
+    }
+
+    // currentChapter() -- same boundary semantics as currentChapterTitle(), but returns
+    // the full Chapter (or null) instead of a title-with-empty-string-fallback, so
+    // callers can distinguish "no chapter here" from "chapter with an empty title".
+
+    @Test
+    fun `currentChapter -- position mid-chapter resolves to that chapter`() {
+        val chapter = ChapterResolver.currentChapter(175.0, chapters)
+
+        assertEquals(chapters[1], chapter)
+    }
+
+    @Test
+    fun `currentChapter -- position at a chapter's exact start resolves to it (start inclusive)`() {
+        val chapter = ChapterResolver.currentChapter(100.0, chapters)
+
+        assertEquals(chapters[1], chapter)
+    }
+
+    @Test
+    fun `currentChapter -- position at a chapter's exact end resolves to the next chapter (end exclusive)`() {
+        // 250.0 is exactly the end of chapter 2 / start of chapter 3 -- must resolve to
+        // chapter 3, not chapter 2.
+        val chapter = ChapterResolver.currentChapter(250.0, chapters)
+
+        assertEquals(chapters[2], chapter)
+    }
+
+    @Test
+    fun `currentChapter -- position before the first chapter's start resolves to null`() {
+        val chapter = ChapterResolver.currentChapter(-5.0, chapters)
+
+        assertNull(chapter)
+    }
+
+    @Test
+    fun `currentChapter -- position at or after the last chapter's end resolves to null`() {
+        val chapter = ChapterResolver.currentChapter(400.0, chapters)
+
+        assertNull(chapter)
+    }
+
+    @Test
+    fun `currentChapter -- position well past the last chapter's end resolves to null`() {
+        val chapter = ChapterResolver.currentChapter(999.0, chapters)
+
+        assertNull(chapter)
     }
 }

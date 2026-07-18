@@ -12,6 +12,9 @@ import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -43,6 +47,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -52,14 +58,20 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.InlineSlider
 import androidx.wear.compose.material.InlineSliderDefaults
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.TimeText
 import androidx.wear.tooling.preview.devices.WearDevices
+import kaf.audiobookshelfwearos.app.data.Chapter
 import kaf.audiobookshelfwearos.app.services.PlayerService
+import kaf.audiobookshelfwearos.app.services.SleepTimerOption
+import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.PlayerBroadcastActions
+import kaf.audiobookshelfwearos.app.utils.RotaryScrubCalculator
 import kotlinx.coroutines.delay
 import timber.log.Timber
 import kotlin.math.roundToInt
@@ -102,6 +114,94 @@ class PlayerActivity : ComponentActivity() {
         var currentPosition by remember { mutableLongStateOf(0L) }
         var duration by remember { mutableLongStateOf(0L) }
         var chapterTitle by remember { mutableStateOf("") }
+        // Backlog item 4: full current Chapter (start/end), not just its title, so
+        // the top-of-screen time display can compute chapter-relative elapsed/remaining
+        // time. Polled from the same existing 1s loop below -- no new timer.
+        var currentChapter by remember { mutableStateOf<Chapter?>(null) }
+        // Absolute book-timeline position (seconds), matching the coordinate space
+        // chapter.start/end use -- deliberately NOT currentPosition/1000 above, since
+        // currentPosition comes from PlayerService.getCurrentPosition() (exoPlayer's
+        // raw track-relative position), which resets at every track boundary and would
+        // silently miscompute chapter-relative time for any multi-file audiobook.
+        var chapterAnchorPositionSeconds by remember { mutableDoubleStateOf(0.0) }
+        // Cycles chapter-remaining (default, index 0) -> chapter-elapsed/total (1) ->
+        // book-elapsed/total (2) -> back to chapter-remaining, same idiom as
+        // BottomLayout's sleepTimerIndex cycling below. Reset to 0 whenever the
+        // current chapter changes (see the poll loop).
+        var timeDisplayModeIndex by remember { mutableIntStateOf(0) }
+
+        val context = LocalContext.current
+        // Backlog item 3: configurable jump amounts -- read once per screen
+        // composition, same convention as the speed slider's initial value below
+        // (`playerService?.getSpeed() ?: 1f`); Settings changes take effect the
+        // next time this screen is opened.
+        val jumpBackwardSeconds = remember { UserDataManager(context).jumpBackwardSeconds }
+        val jumpForwardSeconds = remember { UserDataManager(context).jumpForwardSeconds }
+
+        // Backlog item 7: physical rotary bezel/crown input. "Scrub"/"Volume"/"Off"
+        // is a Settings-configurable preference (read once per screen composition,
+        // same convention as jumpBackwardSeconds/jumpForwardSeconds above); watches
+        // with no rotary hardware simply never emit the scroll events this modifier
+        // listens for, so "no rotary hardware" already degrades to a silent no-op
+        // without any extra guard code here.
+        val bezelMode = remember { UserDataManager(context).bezelMode }
+        val bezelFocusRequester = remember { FocusRequester() }
+        val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
+        LaunchedEffect(Unit) {
+            bezelFocusRequester.requestFocus()
+        }
+
+        val rotaryModifier = when (bezelMode) {
+            "Scrub" -> Modifier.rotaryScrollable(
+                behavior = RotaryScrollableDefaults.behavior(
+                    scrollableState = rememberScrollableState { delta ->
+                        // Seeks by an arbitrary (not fixed jump-button) amount derived
+                        // from the raw scroll delta -- see RotaryScrubCalculator for
+                        // the pixels-per-second mapping and why it's pulled out as a
+                        // pure, unit-tested function.
+                        playerService?.seekRelativeSeconds(
+                            RotaryScrubCalculator.secondsForRotaryDelta(delta)
+                        )
+                        delta
+                    }
+                ),
+                focusRequester = bezelFocusRequester
+            )
+
+            "Volume" -> {
+                // Same AudioManager getStreamVolume/setStreamVolume calls BottomLayout's
+                // volume InlineSlider already uses below -- reused here instead of a
+                // second volume-control mechanism (e.g. adjustStreamVolume). Rotary
+                // scroll deltas arrive as small, frequent pixel amounts, so they're
+                // accumulated until they cross a one-volume-step threshold rather than
+                // adjusting the stream volume on every callback.
+                var volumeScrollAccumulator by remember { mutableFloatStateOf(0f) }
+                Modifier.rotaryScrollable(
+                    behavior = RotaryScrollableDefaults.behavior(
+                        scrollableState = rememberScrollableState { delta ->
+                            volumeScrollAccumulator += delta
+                            val pixelsPerVolumeStep = 50f
+                            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                            var newVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                            while (volumeScrollAccumulator >= pixelsPerVolumeStep) {
+                                newVolume = (newVolume + 1).coerceAtMost(maxVolume)
+                                volumeScrollAccumulator -= pixelsPerVolumeStep
+                            }
+                            while (volumeScrollAccumulator <= -pixelsPerVolumeStep) {
+                                newVolume = (newVolume - 1).coerceAtLeast(0)
+                                volumeScrollAccumulator += pixelsPerVolumeStep
+                            }
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0)
+                            delta
+                        }
+                    ),
+                    focusRequester = bezelFocusRequester
+                )
+            }
+
+            else -> Modifier // "Off" (or any unrecognized value): no rotary handling at all.
+        }
 
         val lifecycleOwner = LocalLifecycleOwner.current
         LaunchedEffect(lifecycleOwner) {
@@ -121,6 +221,19 @@ class PlayerActivity : ComponentActivity() {
                         playerService?.getCurrentChapterTitle()?.let {
                             chapterTitle = it
                         }
+                        // Backlog item 4: recompute the current chapter every tick too
+                        // (same loop, no new timer) and reset the cycling display mode
+                        // back to chapter-remaining whenever the chapter changes --
+                        // Chapter is a data class so structural equality (start/end/
+                        // title) is enough to detect a change tick to tick.
+                        val newChapter = playerService?.getCurrentChapter()
+                        if (newChapter != currentChapter) {
+                            timeDisplayModeIndex = 0
+                        }
+                        currentChapter = newChapter
+                        playerService?.getCurrentTotalPositionInS()?.let {
+                            chapterAnchorPositionSeconds = it
+                        }
                     }
                     delay(1000)
                 }
@@ -132,7 +245,10 @@ class PlayerActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
+                .padding(12.dp)
+                .then(rotaryModifier)
+                .focusRequester(bezelFocusRequester)
+                .focusable(),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -141,14 +257,49 @@ class PlayerActivity : ComponentActivity() {
                     .weight(1f)
                     .fillMaxWidth(), contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = chapterTitle,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    fontSize = 15.sp,
-                    maxLines = 2,
-                    modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp)
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = chapterTitle,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        fontSize = 15.sp,
+                        maxLines = 2,
+                        modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp)
+                    )
+                    // Backlog item 4: chapter-relative time display, moved up from
+                    // BottomLayout and made tappable to cycle display modes. Defaults
+                    // to chapter-remaining ("usually I want to finish a chapter").
+                    val chapter = currentChapter
+                    val positionSeconds = chapterAnchorPositionSeconds
+                    val timeDisplayText = if (chapter == null) {
+                        // No chapter metadata resolved yet -- fall back to book-wide
+                        // elapsed/total regardless of the selected mode.
+                        "${timeToString(currentPosition / 1000)} / ${timeToString(duration / 1000)}"
+                    } else when (timeDisplayModeIndex) {
+                        0 -> {
+                            val remaining = (chapter.end - positionSeconds).coerceAtLeast(0.0)
+                            "-${timeToString(remaining.toLong())}"
+                        }
+                        1 -> {
+                            val elapsedInChapter = (positionSeconds - chapter.start).coerceAtLeast(0.0)
+                            val chapterDuration = (chapter.end - chapter.start).coerceAtLeast(0.0)
+                            "${timeToString(elapsedInChapter.toLong())} / ${timeToString(chapterDuration.toLong())}"
+                        }
+                        else -> "${timeToString(currentPosition / 1000)} / ${timeToString(duration / 1000)}"
+                    }
+                    Text(
+                        text = timeDisplayText,
+                        color = Color.LightGray,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .clickable {
+                                timeDisplayModeIndex = (timeDisplayModeIndex + 1) % 3
+                            }
+                    )
+                }
             }
             Box(
                 modifier = Modifier
@@ -172,12 +323,23 @@ class PlayerActivity : ComponentActivity() {
                             intent.action = "ACTION_REWIND"
                             startForegroundService(intent)
                         }) {
-                        Icon(
-                            tint = Color.White,
+                        Column(
                             modifier = Modifier.fillMaxSize(),
-                            imageVector = Icons.Filled.FastRewind,
-                            contentDescription = "Rewind"
-                        )
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                tint = Color.White,
+                                modifier = Modifier.weight(1f),
+                                imageVector = Icons.Filled.FastRewind,
+                                contentDescription = "Rewind"
+                            )
+                            Text(
+                                text = "${jumpBackwardSeconds}s",
+                                color = Color.White,
+                                fontSize = 9.sp
+                            )
+                        }
                     }
                     Box(
                         modifier = Modifier
@@ -229,14 +391,25 @@ class PlayerActivity : ComponentActivity() {
                         intent.action = "ACTION_FAST_FORWARD"
                         startForegroundService(intent)
                     }) {
-                        Icon(
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(12.dp),
-                            tint = Color.White,
-                            imageVector = Icons.Filled.FastForward,
-                            contentDescription = "Fast Forward"
-                        )
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                modifier = Modifier.weight(1f),
+                                tint = Color.White,
+                                imageVector = Icons.Filled.FastForward,
+                                contentDescription = "Fast Forward"
+                            )
+                            Text(
+                                text = "${jumpForwardSeconds}s",
+                                color = Color.White,
+                                fontSize = 9.sp
+                            )
+                        }
                     }
                 }
             }
@@ -247,7 +420,7 @@ class PlayerActivity : ComponentActivity() {
                     .fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                BottomLayout(currentPosition, duration)
+                BottomLayout()
             }
         }
 
@@ -300,11 +473,18 @@ class PlayerActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun BottomLayout(currentPosition: Long, duration: Long) {
+    private fun BottomLayout() {
         var showVolumeSlider by remember { mutableStateOf(false) }
         var showSpeedSlider by remember { mutableStateOf(false) }
         var showSleepTimerConfirmation by remember { mutableStateOf(false) }
-        val sleepTimerPresetsMinutes = listOf(0, 15, 30, 45, 60)
+        val sleepTimerPresets = listOf(
+            SleepTimerOption.Off,
+            SleepTimerOption.Minutes(15),
+            SleepTimerOption.Minutes(30),
+            SleepTimerOption.Minutes(45),
+            SleepTimerOption.Minutes(60),
+            SleepTimerOption.EndOfChapter
+        )
         var sleepTimerIndex by remember { mutableIntStateOf(0) }
 
         if (showSpeedSlider) {
@@ -363,13 +543,17 @@ class PlayerActivity : ComponentActivity() {
                 )
             }
         } else if (showSleepTimerConfirmation) {
-            val minutes = sleepTimerPresetsMinutes[sleepTimerIndex]
+            val option = sleepTimerPresets[sleepTimerIndex]
             Column(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = if (minutes > 0) "Sleep timer: $minutes min" else "Sleep timer off",
+                    text = when (option) {
+                        is SleepTimerOption.Off -> "Sleep timer off"
+                        is SleepTimerOption.Minutes -> "Sleep timer: ${option.minutes} min"
+                        is SleepTimerOption.EndOfChapter -> "Sleep timer: End of chapter"
+                    },
                     color = Color.LightGray,
                     fontSize = 13.sp
                 )
@@ -381,12 +565,6 @@ class PlayerActivity : ComponentActivity() {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "${timeToString(currentPosition / 1000)} / ${timeToString(duration / 1000)}",
-                color = Color.LightGray,
-                fontSize = 11.sp
-            )
-
             Row(
                 modifier = Modifier
                     .fillMaxSize()
@@ -423,12 +601,11 @@ class PlayerActivity : ComponentActivity() {
                 IconButton(modifier = Modifier
                     .fillMaxHeight()
                     .weight(1f), onClick = {
-                    sleepTimerIndex = (sleepTimerIndex + 1) % sleepTimerPresetsMinutes.size
-                    val minutes = sleepTimerPresetsMinutes[sleepTimerIndex]
-                    if (minutes > 0) {
-                        playerService?.setSleepTimer(minutes)
-                    } else {
-                        playerService?.cancelSleepTimer()
+                    sleepTimerIndex = (sleepTimerIndex + 1) % sleepTimerPresets.size
+                    when (val option = sleepTimerPresets[sleepTimerIndex]) {
+                        is SleepTimerOption.Off -> playerService?.cancelSleepTimer()
+                        is SleepTimerOption.Minutes -> playerService?.setSleepTimer(option.minutes)
+                        is SleepTimerOption.EndOfChapter -> playerService?.setSleepTimerAtChapterEnd()
                     }
                     showSleepTimerConfirmation = true
                 }) {
@@ -436,7 +613,7 @@ class PlayerActivity : ComponentActivity() {
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(2.dp),
-                        tint = if (sleepTimerPresetsMinutes[sleepTimerIndex] > 0) Color.White else Color.Gray,
+                        tint = if (sleepTimerPresets[sleepTimerIndex] !is SleepTimerOption.Off) Color.White else Color.Gray,
                         imageVector = Icons.Filled.Bedtime,
                         contentDescription = "Sleep timer"
                     )
