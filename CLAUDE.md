@@ -70,6 +70,27 @@ is feasible.
   (not the whole remote library), the realistic win here is smaller than it looks —
   revisit only if this is actually measured as a hotspot.
 
+- **Screenshot-based documentation sprint** (planned, not started): auto-generate
+  up-to-date screenshots of the app's key screens and commit them to the repo, so
+  README/docs stay current without manual screenshotting. Not a Playwright job
+  (Playwright is browser-only, can't drive an Android/Wear OS emulator) — the direct
+  equivalent is Android's own UI Automator / Compose screenshot-testing APIs, driven
+  through the *same* Wear OS emulator `instrumented-test` already boots in CI, so no
+  new infrastructure is needed. Planned shape:
+  1. A setup step seeds a few realistic fake `LibraryItem`s straight into Room (same
+     pattern as `BookListActivityTapTest`'s seeding) — some in-progress for "Continue
+     Listening," one fully downloaded, one mid-download — so screenshots actually show
+     the features off, with no dependency on a real Audiobookshelf server.
+  2. A "screenshot walk" instrumented test drives through Book List → Chapter List →
+     Book Management → Now Playing → Settings via `ActivityScenario` + Compose test
+     APIs, capturing each via `composeTestRule.onRoot().captureToImage()`.
+  3. A new `generate-screenshots.yml` workflow (manual `workflow_dispatch` trigger,
+     not on every push) boots the emulator, runs the walk, `adb pull`s the images,
+     and commits them to `docs/screenshots/` (referenced from README.md) or uploads
+     as an artifact.
+  4. Optionally wire into the release process as a manual step alongside the
+     existing version-bump step.
+
 ## Release history this fork has cut
 
 - **v1.14** — battery/optimization pass: WifiLock rescoped to only hold during active

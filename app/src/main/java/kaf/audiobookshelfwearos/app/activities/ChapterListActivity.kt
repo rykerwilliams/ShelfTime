@@ -6,12 +6,14 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -295,60 +297,58 @@ class ChapterListActivity : ComponentActivity() {
                 }
             }
 
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                // Progress information (optimized for circular screen)
-                if (isDownloading) {
-                    val currentProgress = audiobookProgress
+            if (isDownloading) {
+                val currentProgress = audiobookProgress
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 30.dp, vertical = 5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val percent = currentProgress?.overallProgress ?: 0f
+                    // Thin bar: orange track, green fill growing with progress --
+                    // same convention as BookListActivity's swipe row and the book
+                    // management screen's Download button, instead of a circular
+                    // ring here.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .background(Color(0xFFB8860B))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .fillMaxHeight()
+                                .fillMaxWidth(fraction = (percent / 100f).coerceIn(0f, 1f))
+                                .background(Color(0xFF086409))
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                     if (currentProgress != null) {
-                        Column(
-                            modifier = Modifier.padding(5.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            // Circular progress indicator (fits well on round screens)
-                            Box(
-                                modifier = Modifier.size(40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    progress = (currentProgress.overallProgress / 100f).coerceIn(0f, 1f),
-                                    modifier = Modifier.fillMaxSize().padding(5.dp),
-                                    strokeWidth = 3.dp,
-                                    color = Color.Green
-                                )
-                                Text(
-                                    text = if (currentProgress.overallProgress < 0.1f) "<1%" else "${currentProgress.overallProgress.toInt()}%",
-                                    fontSize = 8.sp,
-                                    color = Color.Gray
-                                )
-                            }
-                            
-                            // Speed and time remaining (compact for small screens)
-                            if (currentProgress.averageDownloadSpeed > 0) {
-                                Text(
-                                    text = "${DownloadProgressCalculator.formatBytes(currentProgress.averageDownloadSpeed)}/s",
-                                    fontSize = 7.sp,
-                                    color = Color.Gray
-                                )
-                            }
-                            
-                            if (currentProgress.estimatedTimeRemaining != Long.MAX_VALUE && currentProgress.estimatedTimeRemaining > 0) {
-                                Text(
-                                    text = DownloadProgressCalculator.formatTime(currentProgress.estimatedTimeRemaining),
-                                    fontSize = 7.sp,
-                                    color = Color.Gray
-                                )
-                            }
+                        Text(
+                            text = if (percent < 0.1f) "<1%" else "${percent.toInt()}%",
+                            fontSize = 8.sp,
+                            color = Color.Gray
+                        )
+                        if (currentProgress.averageDownloadSpeed > 0) {
+                            Text(
+                                text = "${DownloadProgressCalculator.formatBytes(currentProgress.averageDownloadSpeed)}/s",
+                                fontSize = 7.sp,
+                                color = Color.Gray
+                            )
+                        }
+                        if (currentProgress.estimatedTimeRemaining != Long.MAX_VALUE && currentProgress.estimatedTimeRemaining > 0) {
+                            Text(
+                                text = DownloadProgressCalculator.formatTime(currentProgress.estimatedTimeRemaining),
+                                fontSize = 7.sp,
+                                color = Color.Gray
+                            )
                         }
                     } else {
                         // Fallback to simple track count display
-                        Column {
-                            Text(text = "Downloading...", fontSize = 8.sp, color = Color.Gray)
-                            Text(text = "$downloadedCount / $totalTracks", fontSize = 10.sp, color = Color.Gray)
-                        }
+                        Text(text = "Downloading...", fontSize = 8.sp, color = Color.Gray)
+                        Text(text = "$downloadedCount / $totalTracks", fontSize = 10.sp, color = Color.Gray)
                     }
                 }
             }
