@@ -53,7 +53,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -341,7 +344,13 @@ class BookListActivity : ComponentActivity() {
         }
 
         Scaffold(
-            modifier = Modifier.onGloballyPositioned {},
+            // Lets UiAutomator-based instrumented tests (e.g. the screenshot
+            // sprint's swipe-to-reveal capture) find a specific row via
+            // By.res(testTag) instead of guessing at accessibility-tree
+            // bounds -- see BookItem's SwipeToRevealCard testTag below.
+            modifier = Modifier
+                .onGloballyPositioned {}
+                .semantics { testTagsAsResourceId = true },
             positionIndicator = {
                 PositionIndicator(scalingLazyListState = scalingLazyListState)
             },
@@ -690,6 +699,10 @@ class BookListActivity : ComponentActivity() {
         }
 
         SwipeToRevealCard(
+            // Precise, id-scoped hook for instrumented tests to find and
+            // swipe this exact row via By.res() -- see testTagsAsResourceId
+            // on the Scaffold above.
+            modifier = Modifier.testTag("book_row_${item.id}"),
             revealState = revealState,
             onFullSwipe = onPrimaryAction,
             colors = SwipeToRevealDefaults.actionColors(

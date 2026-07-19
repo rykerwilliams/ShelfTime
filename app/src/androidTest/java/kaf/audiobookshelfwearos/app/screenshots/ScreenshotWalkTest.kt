@@ -24,6 +24,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import kaf.audiobookshelfwearos.app.MainApp
@@ -58,9 +59,10 @@ import org.junit.runner.RunWith
  * Also fakes "downloaded" and "downloading" state for two of the seeded
  * books by writing directly into Media3's download index (see
  * putFakeDownload()'s doc) -- no real network download needed -- and drives
- * the Book List's swipe-to-reveal gesture via UiAutomator (By/UiDevice/
- * Until) to capture what each of the three swipe states actually looks
- * like, not just the resting list.
+ * the Book List's swipe-to-reveal gesture via UiAutomator, locating each
+ * row by its SwipeToRevealCard's testTag (see swipeRowOpen()'s doc) to
+ * capture what each of the three swipe states actually looks like, not
+ * just the resting list.
  *
  * Deliberately NOT the Compose UI testing APIs (createEmptyComposeRule(),
  * onNodeWithText(), etc.), which is the one dependency that caused
@@ -88,6 +90,7 @@ class ScreenshotWalkTest {
     private val seededIds = mutableListOf<String>()
     private val fakeDownloadTrackIds = mutableListOf<String>()
     private lateinit var continueListeningItemId: String
+    private lateinit var notStartedItemId: String
     private lateinit var downloadedItemId: String
     private lateinit var downloadingItemId: String
 
@@ -212,6 +215,7 @@ class ScreenshotWalkTest {
             seededIds.add(item.id)
         }
         continueListeningItemId = items[0].id
+        notStartedItemId = items[1].id
         downloadedItemId = items[2].id
         downloadingItemId = items[3].id
 
@@ -337,70 +341,39 @@ class ScreenshotWalkTest {
         Log.i("ScreenshotWalkTest", "$name: wrote screenshot to $uri")
     }
 
-    // Finds a Book List row by its (short, distinctive) title via the
-    // accessibility tree Compose already populates, scrolling down a bounded
-    // number of times if it isn't in the current viewport yet, then swipes
-    // it open right-to-left (SwipeToRevealCard's reveal direction) and gives
-    // the reveal animation a moment to settle.
-    private fun swipeRowOpen(title: String): Boolean {
+    // Finds a Book List row via its SwipeToRevealCard's testTag (see
+    // BookListActivity: Modifier.testTag("book_row_$itemId") plus
+    // testTagsAsResourceId on the enclosing Scaffold, the officially
+    // documented way to hand UiAutomator a precise hook into a Compose
+    // subtree: https://developer.android.com/develop/ui/compose/testing/interoperability).
+    // Six earlier attempts at this same reveal, all built on locating the
+    // row by its title TEXT and hand-computing swipe coordinates from
+    // whatever ancestor bounds looked plausible, were unreliable in ways
+    // that never fully made sense (one row worked, another identical-looking
+    // one didn't, regardless of speed/timing/edge-position fixes). Finding
+    // the actual swipeable element by id and using its own built-in
+    // UiObject2.swipe(Direction, percent) -- calibrated against that
+    // element's real bounds, not a guess -- is the documented alternative.
+    private fun swipeRowOpen(itemId: String): Boolean {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
-        // Rows that need scrolling to find get, as a side effect, ~300ms+ of
-        // extra settle time per scroll attempt before they're swiped -- and
-        // those swipes have been reliable. Rows found immediately (no
-        // scrolling needed) get swiped right after ActivityScenario.launch()
-        // returns, before the list's first layout/entrance-transition pass
-        // has necessarily finished, and those swipes have NOT been reliable.
-        // Give every row the same settle time up front rather than only the
-        // ones that happen to need scrolling.
         Thread.sleep(1_500)
-        var row = device.wait(Until.findObject(By.textContains(title)), 2_000)
+        val resourceName = "book_row_$itemId"
+        var row = device.wait(Until.findObject(By.res(resourceName)), 2_000)
         var attempts = 0
         while (row == null && attempts < 6) {
             val width = device.displayWidth
             val height = device.displayHeight
             device.swipe(width / 2, (height * 0.8).toInt(), width / 2, (height * 0.2).toInt(), 20)
             Thread.sleep(300)
-            row = device.wait(Until.findObject(By.textContains(title)), 1_000)
+            row = device.wait(Until.findObject(By.res(resourceName)), 1_000)
             attempts++
         }
         if (row == null) {
-            Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find row for '$title' after scrolling")
+            Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find '$resourceName' after scrolling")
             return false
         }
-        // 'Silent Orbit' still failed after the settle-delay fix, and its
-        // logged bounds put it right at the very bottom edge of the screen
-        // (within ~20px of the display height) -- likely a partially
-        // clipped touch target. A small unconditional nudge-scroll pushes
-        // whatever's found up away from the edge before we re-locate and
-        // swipe it, without materially changing which row we're targeting.
-        val width = device.displayWidth
-        val height = device.displayHeight
-        device.swipe(width / 2, (height * 0.6).toInt(), width / 2, (height * 0.45).toInt(), 20)
-        Thread.sleep(300)
-        row = device.wait(Until.findObject(By.textContains(title)), 2_000)
-        if (row == null) {
-            Log.e("ScreenshotWalkTest", "swipeRowOpen: lost '$title' after nudge-scroll")
-            return false
-        }
-        // Three prior attempts (raw edge-to-edge at two speeds, then the
-        // widest-ancestor's bounds, which turned out to span multiple rows
-        // at once and caused an accidental scroll) all rendered identically
-        // to the resting list. The likely real cause was staring us in the
-        // face the whole time: docs/SCREENS.md's own description says "a
-        // full swipe triggers the primary action immediately instead of
-        // just revealing it" -- an edge-to-edge drag IS a full swipe, so
-        // every attempt was likely auto-triggering (and then auto-closing)
-        // the action instead of just revealing it. A partial drag across
-        // ~45% of the screen width, anchored at the title text's own
-        // (already-confirmed-correct) vertical center, should reveal
-        // without crossing the full-swipe threshold.
-        val bounds = row.visibleBounds
-        val y = bounds.centerY()
-        val screenWidth = device.displayWidth
-        val startX = (screenWidth * 0.9).toInt()
-        val endX = (screenWidth * 0.45).toInt()
-        Log.i("ScreenshotWalkTest", "swipeRowOpen: '$title' textBounds=$bounds swipe=($startX,$y)->($endX,$y)")
-        device.swipe(startX, y, endX, y, 60)
+        Log.i("ScreenshotWalkTest", "swipeRowOpen: '$resourceName' bounds=${row.visibleBounds}")
+        row.swipe(Direction.LEFT, 0.6f)
         Thread.sleep(800)
         return true
     }
@@ -413,26 +386,20 @@ class ScreenshotWalkTest {
             takeScreenshot(it, "01_book_list")
         }
 
-        // 'Silent Orbit' is reliably found but its swipe-reveal never
-        // triggers no matter the settle/nudge timing -- swapping to 'The
-        // Cartographer's Dream' made it worse (never found at all within
-        // the scroll bound), so reverted back to the row that's at least
-        // consistently located. See CLAUDE.md for the open status of this
-        // one specific screenshot.
         ActivityScenario.launch(BookListActivity::class.java).use {
-            if (swipeRowOpen("Silent Orbit")) {
+            if (swipeRowOpen(notStartedItemId)) {
                 takeScreenshot(it, "01b_book_list_swipe_download")
             }
         }
 
         ActivityScenario.launch(BookListActivity::class.java).use {
-            if (swipeRowOpen("Midnight Static")) {
+            if (swipeRowOpen(downloadingItemId)) {
                 takeScreenshot(it, "01c_book_list_swipe_downloading")
             }
         }
 
         ActivityScenario.launch(BookListActivity::class.java).use {
-            if (swipeRowOpen("Harbor Lights")) {
+            if (swipeRowOpen(downloadedItemId)) {
                 takeScreenshot(it, "01d_book_list_swipe_delete")
             }
         }
