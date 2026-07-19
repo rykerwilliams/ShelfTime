@@ -335,19 +335,37 @@ class ScreenshotWalkTest {
             Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find row for '$title' after scrolling")
             return false
         }
-        val bounds = row.visibleBounds
+        // The title Text node's own bounds are narrow (just the glyphs) --
+        // walk up the accessibility tree to find the widest ancestor within
+        // a few levels, on the theory that SwipeToRevealCard's gesture
+        // detector is attached to the full-width row container, not the
+        // text itself, and starting the drag from a point the gesture
+        // detector doesn't actually own is a plausible reason two prior
+        // attempts (raw text bounds, at two different swipe speeds) never
+        // triggered a reveal at all.
+        var widest = row
+        var ancestor = row.parent
+        var level = 0
+        while (ancestor != null && level < 4) {
+            Log.i("ScreenshotWalkTest", "swipeRowOpen: '$title' ancestor[$level] bounds=${ancestor.visibleBounds}")
+            if (ancestor.visibleBounds.width() > widest.visibleBounds.width()) {
+                widest = ancestor
+            }
+            ancestor = ancestor.parent
+            level++
+        }
+        val bounds = widest.visibleBounds
         val y = bounds.centerY()
-        val screenWidth = device.displayWidth
         Log.i(
             "ScreenshotWalkTest",
-            "swipeRowOpen: '$title' bounds=$bounds screen=${screenWidth}x${device.displayHeight}"
+            "swipeRowOpen: '$title' widest bounds=$bounds screen=${device.displayWidth}x${device.displayHeight}"
         )
         // A fast synthetic swipe risks being read as an attempted vertical
         // scroll (this row lives inside a vertically scrollable list) rather
         // than a deliberate horizontal drag -- a slower, higher-step-count
         // swipe is closer to a real human drag and less likely to be
         // misread by Compose's gesture detector.
-        device.swipe(screenWidth - 5, y, 5, y, 100)
+        device.swipe(bounds.right - 5, y, bounds.left + 5, y, 100)
         Thread.sleep(800)
         return true
     }
