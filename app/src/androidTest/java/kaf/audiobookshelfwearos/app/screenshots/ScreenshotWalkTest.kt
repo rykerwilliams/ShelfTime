@@ -413,15 +413,14 @@ class ScreenshotWalkTest {
             takeScreenshot(it, "01_book_list")
         }
 
-        // 'Silent Orbit' (the first non-Continue-Listening row, right after
-        // the section divider) never reveals via synthetic swipe no matter
-        // what settle/nudge timing is used, while every other row -- same
-        // gesture code, same DownloadBudget-gated data -- reveals reliably.
-        // Whatever's specific to that exact position, a different
-        // not-downloaded book sidesteps it rather than continuing to guess
-        // at a position-specific quirk.
+        // 'Silent Orbit' is reliably found but its swipe-reveal never
+        // triggers no matter the settle/nudge timing -- swapping to 'The
+        // Cartographer's Dream' made it worse (never found at all within
+        // the scroll bound), so reverted back to the row that's at least
+        // consistently located. See CLAUDE.md for the open status of this
+        // one specific screenshot.
         ActivityScenario.launch(BookListActivity::class.java).use {
-            if (swipeRowOpen("The Cartographer's Dream")) {
+            if (swipeRowOpen("Silent Orbit")) {
                 takeScreenshot(it, "01b_book_list_swipe_download")
             }
         }
