@@ -344,6 +344,15 @@ class ScreenshotWalkTest {
     // the reveal animation a moment to settle.
     private fun swipeRowOpen(title: String): Boolean {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        // Rows that need scrolling to find get, as a side effect, ~300ms+ of
+        // extra settle time per scroll attempt before they're swiped -- and
+        // those swipes have been reliable. Rows found immediately (no
+        // scrolling needed) get swiped right after ActivityScenario.launch()
+        // returns, before the list's first layout/entrance-transition pass
+        // has necessarily finished, and those swipes have NOT been reliable.
+        // Give every row the same settle time up front rather than only the
+        // ones that happen to need scrolling.
+        Thread.sleep(1_500)
         var row = device.wait(Until.findObject(By.textContains(title)), 2_000)
         var attempts = 0
         while (row == null && attempts < 6) {
