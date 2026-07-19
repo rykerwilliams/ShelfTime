@@ -6,13 +6,25 @@ import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.exoplayer.offline.DefaultDownloadIndex
+import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadProgress as Media3DownloadProgress
+import androidx.media3.exoplayer.offline.DownloadRequest
+import androidx.media3.exoplayer.offline.WritableDownloadIndex
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.activities.BookListActivity
 import kaf.audiobookshelfwearos.app.activities.BookManagementActivity
@@ -39,10 +51,22 @@ import org.junit.runner.RunWith
  * captures a screenshot of each by drawing the activity's own decorView into
  * a Bitmap via Canvas, then publishing it via MediaStore (see
  * takeScreenshot()'s doc for why both of those replaced more obvious first
- * attempts). Deliberately NOT the Compose UI testing APIs
- * (createEmptyComposeRule(), onNodeWithText(), etc.), which is the one
- * dependency that caused BookListActivityTapTest's unexplained "Failed to
- * instantiate test runner class" failures across four straight CI pushes.
+ * attempts).
+ *
+ * Also fakes "downloaded" and "downloading" state for two of the seeded
+ * books by writing directly into Media3's download index (see
+ * putFakeDownload()'s doc) -- no real network download needed -- and drives
+ * the Book List's swipe-to-reveal gesture via UiAutomator (By/UiDevice/
+ * Until) to capture what each of the three swipe states actually looks
+ * like, not just the resting list.
+ *
+ * Deliberately NOT the Compose UI testing APIs (createEmptyComposeRule(),
+ * onNodeWithText(), etc.), which is the one dependency that caused
+ * BookListActivityTapTest's unexplained "Failed to instantiate test runner
+ * class" failures across four straight CI pushes. UiAutomator is a
+ * separate artifact with no ties to that dependency graph -- it drives the
+ * accessibility tree Compose already exposes, the same way a real user's
+ * TalkBack session would, so it carries none of that risk.
  *
  * Excluded from the regular per-push instrumented-test job (see
  * build-apk.yml's `notClass` filter) since this doesn't assert anything --
@@ -60,7 +84,10 @@ class ScreenshotWalkTest {
     }
 
     private val seededIds = mutableListOf<String>()
+    private val fakeDownloadTrackIds = mutableListOf<String>()
     private lateinit var continueListeningItemId: String
+    private lateinit var downloadedItemId: String
+    private lateinit var downloadingItemId: String
 
     private fun database() =
         (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as MainApp).database
@@ -104,6 +131,44 @@ class ScreenshotWalkTest {
         )
     }
 
+    // Writes straight into the same Media3 download database the app's own
+    // MyDownloadService.getDownloadManager() reads from -- DownloadManager's
+    // downloadIndex getter only exposes the read-only DownloadIndex
+    // interface, but the underlying storage is a DefaultDownloadIndex over a
+    // StandaloneDatabaseProvider(context), and constructing a fresh instance
+    // of both with the same Context resolves to the exact same on-disk
+    // database (that's the whole point of "Standalone"). No real download
+    // ever runs; this just makes Track.isDownloaded()/isDownloading() (and
+    // everything built on them) see the state we want for a screenshot.
+    @OptIn(UnstableApi::class)
+    private fun putFakeDownload(
+        index: WritableDownloadIndex,
+        trackId: String,
+        state: Int,
+        contentLength: Long,
+        bytesDownloaded: Long,
+        percentDownloaded: Float
+    ) {
+        val request = DownloadRequest.Builder(trackId, Uri.parse("https://fake.shelftime.example/$trackId")).build()
+        val progress = Media3DownloadProgress().apply {
+            this.bytesDownloaded = bytesDownloaded
+            this.percentDownloaded = percentDownloaded
+        }
+        val download = Download(
+            request,
+            state,
+            System.currentTimeMillis(),
+            System.currentTimeMillis(),
+            contentLength,
+            Download.STOP_REASON_NONE,
+            Download.FAILURE_REASON_NONE,
+            progress
+        )
+        index.putDownload(download)
+        fakeDownloadTrackIds.add(trackId)
+    }
+
+    @OptIn(UnstableApi::class)
     @Before
     fun seedFakeLibrary() = runBlocking {
         val items = listOf(
@@ -116,7 +181,7 @@ class ScreenshotWalkTest {
                 lastUpdate = System.currentTimeMillis()
             ),
             fakeItem(
-                id = "screenshot-not-started-1",
+                id = "screenshot-not-started",
                 title = "Silent Orbit",
                 author = "Rhea Vasquez",
                 narrator = null,
@@ -124,10 +189,18 @@ class ScreenshotWalkTest {
                 lastUpdate = 0L
             ),
             fakeItem(
-                id = "screenshot-not-started-2",
-                title = "The Cartographer's Dream",
+                id = "screenshot-downloaded",
+                title = "Harbor Lights",
                 author = "Julian Feld",
                 narrator = "Ines Marchetti",
+                currentTimeSeconds = 0.0,
+                lastUpdate = 0L
+            ),
+            fakeItem(
+                id = "screenshot-downloading",
+                title = "Midnight Static",
+                author = "Priya Anand",
+                narrator = null,
                 currentTimeSeconds = 0.0,
                 lastUpdate = 0L
             )
@@ -136,15 +209,56 @@ class ScreenshotWalkTest {
             database().libraryItemDao().insertLibraryItem(item)
             seededIds.add(item.id)
         }
-        continueListeningItemId = items.first().id
+        continueListeningItemId = items[0].id
+        downloadedItemId = items[2].id
+        downloadingItemId = items[3].id
+
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val downloadIndex = DefaultDownloadIndex(StandaloneDatabaseProvider(targetContext))
+        val perTrackBytes = 60_000_000L
+
+        // "Harbor Lights": all 3 tracks completed -- Track.isDownloaded()
+        // requires every track in the book to be STATE_COMPLETED.
+        for (i in 0..2) {
+            putFakeDownload(
+                downloadIndex,
+                "screenshot-downloaded-track-$i",
+                Download.STATE_COMPLETED,
+                perTrackBytes,
+                perTrackBytes,
+                100f
+            )
+        }
+
+        // "Midnight Static": one track done, one mid-flight, one queued --
+        // isDownloading() only needs one DOWNLOADING track, and this also
+        // gives AudiobookProgressCalculator a realistic ~50% to display.
+        putFakeDownload(
+            downloadIndex, "screenshot-downloading-track-0",
+            Download.STATE_COMPLETED, perTrackBytes, perTrackBytes, 100f
+        )
+        putFakeDownload(
+            downloadIndex, "screenshot-downloading-track-1",
+            Download.STATE_DOWNLOADING, perTrackBytes, perTrackBytes / 2, 50f
+        )
+        putFakeDownload(
+            downloadIndex, "screenshot-downloading-track-2",
+            Download.STATE_QUEUED, perTrackBytes, 0L, 0f
+        )
     }
 
+    @OptIn(UnstableApi::class)
     @After
     fun removeFakeLibrary() = runBlocking {
         for (id in seededIds) {
             database().libraryItemDao().getLibraryItemById(id)?.let {
                 database().libraryItemDao().deleteLibraryItem(it)
             }
+        }
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val downloadIndex = DefaultDownloadIndex(StandaloneDatabaseProvider(targetContext))
+        for (trackId in fakeDownloadTrackIds) {
+            downloadIndex.removeDownload(trackId)
         }
     }
 
@@ -200,12 +314,59 @@ class ScreenshotWalkTest {
         Log.i("ScreenshotWalkTest", "$name: wrote screenshot to $uri")
     }
 
+    // Finds a Book List row by its (short, distinctive) title via the
+    // accessibility tree Compose already populates, scrolling down a bounded
+    // number of times if it isn't in the current viewport yet, then swipes
+    // it open right-to-left (SwipeToRevealCard's reveal direction) and gives
+    // the reveal animation a moment to settle.
+    private fun swipeRowOpen(title: String): Boolean {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        var row = device.wait(Until.findObject(By.textContains(title)), 2_000)
+        var attempts = 0
+        while (row == null && attempts < 6) {
+            val width = device.displayWidth
+            val height = device.displayHeight
+            device.swipe(width / 2, (height * 0.8).toInt(), width / 2, (height * 0.2).toInt(), 20)
+            Thread.sleep(300)
+            row = device.wait(Until.findObject(By.textContains(title)), 1_000)
+            attempts++
+        }
+        if (row == null) {
+            Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find row for '$title' after scrolling")
+            return false
+        }
+        val bounds = row.visibleBounds
+        val y = bounds.centerY()
+        val screenWidth = device.displayWidth
+        device.swipe(screenWidth - 10, y, 20, y, 40)
+        Thread.sleep(500)
+        return true
+    }
+
     @Test
     fun captureKeyScreens() {
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
 
         ActivityScenario.launch(BookListActivity::class.java).use {
             takeScreenshot(it, "01_book_list")
+        }
+
+        ActivityScenario.launch(BookListActivity::class.java).use {
+            if (swipeRowOpen("Silent Orbit")) {
+                takeScreenshot(it, "01b_book_list_swipe_download")
+            }
+        }
+
+        ActivityScenario.launch(BookListActivity::class.java).use {
+            if (swipeRowOpen("Midnight Static")) {
+                takeScreenshot(it, "01c_book_list_swipe_downloading")
+            }
+        }
+
+        ActivityScenario.launch(BookListActivity::class.java).use {
+            if (swipeRowOpen("Harbor Lights")) {
+                takeScreenshot(it, "01d_book_list_swipe_delete")
+            }
         }
 
         // The "id" extra has to be on the launch Intent itself, not set on the
@@ -218,11 +379,25 @@ class ScreenshotWalkTest {
             takeScreenshot(it, "02_chapter_list")
         }
 
+        ActivityScenario.launch<ChapterListActivity>(
+            Intent(targetContext, ChapterListActivity::class.java)
+                .putExtra("id", downloadingItemId)
+        ).use {
+            takeScreenshot(it, "02b_chapter_list_downloading")
+        }
+
         ActivityScenario.launch<BookManagementActivity>(
             Intent(targetContext, BookManagementActivity::class.java)
                 .putExtra("id", continueListeningItemId)
         ).use {
             takeScreenshot(it, "03_book_management")
+        }
+
+        ActivityScenario.launch<BookManagementActivity>(
+            Intent(targetContext, BookManagementActivity::class.java)
+                .putExtra("id", downloadedItemId)
+        ).use {
+            takeScreenshot(it, "03b_book_management_downloaded")
         }
 
         ActivityScenario.launch(SettingsActivity::class.java).use {
