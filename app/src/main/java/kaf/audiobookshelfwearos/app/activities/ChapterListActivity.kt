@@ -179,19 +179,26 @@ class ChapterListActivity : ComponentActivity() {
         val trackProgresses = remember { mutableStateMapOf<String, DownloadProgress>() }
         var audiobookProgress by remember { mutableStateOf<AudiobookDownloadProgress?>(null) }
 
-        var isDownloaded by remember {
+        // Keyed on libraryItem.id -- unkeyed remember{} only evaluates its
+        // initializer the first time this call site composes, so if that
+        // first composition ever happens against a stale/different
+        // libraryItem value, these would be stuck wrong until the next real
+        // DownloadManager.Listener callback happened to correct them (see
+        // BookListActivity/BookManagementActivity, which already had this
+        // exact fix applied for the same staleness bug).
+        var isDownloaded by remember(libraryItem.id) {
             mutableStateOf(
                 libraryItem.media.tracks.all { track -> track.isDownloaded(this) }
             )
         }
 
-        var isDownloading by remember {
+        var isDownloading by remember(libraryItem.id) {
             mutableStateOf(
                 libraryItem.media.tracks.any { track -> track.isDownloading(this) }
             )
         }
 
-        var downloadedCount by remember {
+        var downloadedCount by remember(libraryItem.id) {
             mutableStateOf(libraryItem.media.tracks.count { track -> track.isDownloaded(this) })
         }
         val totalTracks = libraryItem.media.tracks.size

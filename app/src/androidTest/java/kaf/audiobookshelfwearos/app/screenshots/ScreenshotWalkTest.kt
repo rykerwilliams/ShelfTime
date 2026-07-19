@@ -335,37 +335,25 @@ class ScreenshotWalkTest {
             Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find row for '$title' after scrolling")
             return false
         }
-        // The title Text node's own bounds are narrow (just the glyphs) --
-        // walk up the accessibility tree to find the widest ancestor within
-        // a few levels, on the theory that SwipeToRevealCard's gesture
-        // detector is attached to the full-width row container, not the
-        // text itself, and starting the drag from a point the gesture
-        // detector doesn't actually own is a plausible reason two prior
-        // attempts (raw text bounds, at two different swipe speeds) never
-        // triggered a reveal at all.
-        var widest = row
-        var ancestor = row.parent
-        var level = 0
-        while (ancestor != null && level < 4) {
-            Log.i("ScreenshotWalkTest", "swipeRowOpen: '$title' ancestor[$level] bounds=${ancestor.visibleBounds}")
-            if (ancestor.visibleBounds.width() > widest.visibleBounds.width()) {
-                widest = ancestor
-            }
-            ancestor = ancestor.parent
-            level++
-        }
-        val bounds = widest.visibleBounds
+        // Three prior attempts (raw edge-to-edge at two speeds, then the
+        // widest-ancestor's bounds, which turned out to span multiple rows
+        // at once and caused an accidental scroll) all rendered identically
+        // to the resting list. The likely real cause was staring us in the
+        // face the whole time: docs/SCREENS.md's own description says "a
+        // full swipe triggers the primary action immediately instead of
+        // just revealing it" -- an edge-to-edge drag IS a full swipe, so
+        // every attempt was likely auto-triggering (and then auto-closing)
+        // the action instead of just revealing it. A partial drag across
+        // ~45% of the screen width, anchored at the title text's own
+        // (already-confirmed-correct) vertical center, should reveal
+        // without crossing the full-swipe threshold.
+        val bounds = row.visibleBounds
         val y = bounds.centerY()
-        Log.i(
-            "ScreenshotWalkTest",
-            "swipeRowOpen: '$title' widest bounds=$bounds screen=${device.displayWidth}x${device.displayHeight}"
-        )
-        // A fast synthetic swipe risks being read as an attempted vertical
-        // scroll (this row lives inside a vertically scrollable list) rather
-        // than a deliberate horizontal drag -- a slower, higher-step-count
-        // swipe is closer to a real human drag and less likely to be
-        // misread by Compose's gesture detector.
-        device.swipe(bounds.right - 5, y, bounds.left + 5, y, 100)
+        val screenWidth = device.displayWidth
+        val startX = (screenWidth * 0.9).toInt()
+        val endX = (screenWidth * 0.45).toInt()
+        Log.i("ScreenshotWalkTest", "swipeRowOpen: '$title' textBounds=$bounds swipe=($startX,$y)->($endX,$y)")
+        device.swipe(startX, y, endX, y, 60)
         Thread.sleep(800)
         return true
     }
