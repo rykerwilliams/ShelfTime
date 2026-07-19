@@ -6,13 +6,27 @@ import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.exoplayer.offline.DefaultDownloadIndex
+import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadManager
+import androidx.media3.exoplayer.offline.DownloadProgress as Media3DownloadProgress
+import androidx.media3.exoplayer.offline.DownloadRequest
+import androidx.media3.exoplayer.offline.WritableDownloadIndex
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
 import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.activities.BookListActivity
 import kaf.audiobookshelfwearos.app.activities.BookManagementActivity
@@ -24,6 +38,7 @@ import kaf.audiobookshelfwearos.app.data.Media
 import kaf.audiobookshelfwearos.app.data.Metadata
 import kaf.audiobookshelfwearos.app.data.Track
 import kaf.audiobookshelfwearos.app.data.UserMediaProgress
+import kaf.audiobookshelfwearos.app.services.MyDownloadService
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -39,10 +54,23 @@ import org.junit.runner.RunWith
  * captures a screenshot of each by drawing the activity's own decorView into
  * a Bitmap via Canvas, then publishing it via MediaStore (see
  * takeScreenshot()'s doc for why both of those replaced more obvious first
- * attempts). Deliberately NOT the Compose UI testing APIs
- * (createEmptyComposeRule(), onNodeWithText(), etc.), which is the one
- * dependency that caused BookListActivityTapTest's unexplained "Failed to
- * instantiate test runner class" failures across four straight CI pushes.
+ * attempts).
+ *
+ * Also fakes "downloaded" and "downloading" state for two of the seeded
+ * books by writing directly into Media3's download index (see
+ * putFakeDownload()'s doc) -- no real network download needed -- and drives
+ * the Book List's swipe-to-reveal gesture via UiAutomator, locating each
+ * row by its SwipeToRevealCard's testTag (see swipeRowOpen()'s doc) to
+ * capture what each of the three swipe states actually looks like, not
+ * just the resting list.
+ *
+ * Deliberately NOT the Compose UI testing APIs (createEmptyComposeRule(),
+ * onNodeWithText(), etc.), which is the one dependency that caused
+ * BookListActivityTapTest's unexplained "Failed to instantiate test runner
+ * class" failures across four straight CI pushes. UiAutomator is a
+ * separate artifact with no ties to that dependency graph -- it drives the
+ * accessibility tree Compose already exposes, the same way a real user's
+ * TalkBack session would, so it carries none of that risk.
  *
  * Excluded from the regular per-push instrumented-test job (see
  * build-apk.yml's `notClass` filter) since this doesn't assert anything --
@@ -60,7 +88,11 @@ class ScreenshotWalkTest {
     }
 
     private val seededIds = mutableListOf<String>()
+    private val fakeDownloadTrackIds = mutableListOf<String>()
     private lateinit var continueListeningItemId: String
+    private lateinit var notStartedItemId: String
+    private lateinit var downloadedItemId: String
+    private lateinit var downloadingItemId: String
 
     private fun database() =
         (InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as MainApp).database
@@ -104,6 +136,44 @@ class ScreenshotWalkTest {
         )
     }
 
+    // Writes straight into the same Media3 download database the app's own
+    // MyDownloadService.getDownloadManager() reads from -- DownloadManager's
+    // downloadIndex getter only exposes the read-only DownloadIndex
+    // interface, but the underlying storage is a DefaultDownloadIndex over a
+    // StandaloneDatabaseProvider(context), and constructing a fresh instance
+    // of both with the same Context resolves to the exact same on-disk
+    // database (that's the whole point of "Standalone"). No real download
+    // ever runs; this just makes Track.isDownloaded()/isDownloading() (and
+    // everything built on them) see the state we want for a screenshot.
+    @OptIn(UnstableApi::class)
+    private fun putFakeDownload(
+        index: WritableDownloadIndex,
+        trackId: String,
+        state: Int,
+        contentLength: Long,
+        bytesDownloaded: Long,
+        percentDownloaded: Float
+    ) {
+        val request = DownloadRequest.Builder(trackId, Uri.parse("https://fake.shelftime.example/$trackId")).build()
+        val progress = Media3DownloadProgress().apply {
+            this.bytesDownloaded = bytesDownloaded
+            this.percentDownloaded = percentDownloaded
+        }
+        val download = Download(
+            request,
+            state,
+            System.currentTimeMillis(),
+            System.currentTimeMillis(),
+            contentLength,
+            Download.STOP_REASON_NONE,
+            Download.FAILURE_REASON_NONE,
+            progress
+        )
+        index.putDownload(download)
+        fakeDownloadTrackIds.add(trackId)
+    }
+
+    @OptIn(UnstableApi::class)
     @Before
     fun seedFakeLibrary() = runBlocking {
         val items = listOf(
@@ -116,7 +186,7 @@ class ScreenshotWalkTest {
                 lastUpdate = System.currentTimeMillis()
             ),
             fakeItem(
-                id = "screenshot-not-started-1",
+                id = "screenshot-not-started",
                 title = "Silent Orbit",
                 author = "Rhea Vasquez",
                 narrator = null,
@@ -124,10 +194,18 @@ class ScreenshotWalkTest {
                 lastUpdate = 0L
             ),
             fakeItem(
-                id = "screenshot-not-started-2",
-                title = "The Cartographer's Dream",
+                id = "screenshot-downloaded",
+                title = "Harbor Lights",
                 author = "Julian Feld",
                 narrator = "Ines Marchetti",
+                currentTimeSeconds = 0.0,
+                lastUpdate = 0L
+            ),
+            fakeItem(
+                id = "screenshot-downloading",
+                title = "Midnight Static",
+                author = "Priya Anand",
+                narrator = null,
                 currentTimeSeconds = 0.0,
                 lastUpdate = 0L
             )
@@ -136,15 +214,78 @@ class ScreenshotWalkTest {
             database().libraryItemDao().insertLibraryItem(item)
             seededIds.add(item.id)
         }
-        continueListeningItemId = items.first().id
+        continueListeningItemId = items[0].id
+        notStartedItemId = items[1].id
+        downloadedItemId = items[2].id
+        downloadingItemId = items[3].id
+
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        // DownloadManager's constructor queues its initialize() work onto a
+        // dedicated background HandlerThread and returns immediately --
+        // initialize() unconditionally calls
+        // downloadIndex.setDownloadingStatesToQueued() (Media3's own
+        // defensive reset for downloads that were "in progress" before a
+        // restart, since no real downloader thread exists yet to resume
+        // them), and only fires Listener.onInitialized() on the main thread
+        // once that finishes. Just calling getDownloadManager() and moving
+        // on isn't enough -- the reset can still run *after* we've already
+        // inserted the fake DOWNLOADING record, clobbering it. Block until
+        // onInitialized() actually fires before seeding anything.
+        val downloadManager = MyDownloadService.getDownloadManager(targetContext)
+        if (!downloadManager.isInitialized) {
+            val initLatch = java.util.concurrent.CountDownLatch(1)
+            downloadManager.addListener(object : DownloadManager.Listener {
+                override fun onInitialized(dm: DownloadManager) {
+                    initLatch.countDown()
+                }
+            })
+            initLatch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        val downloadIndex = DefaultDownloadIndex(StandaloneDatabaseProvider(targetContext))
+        val perTrackBytes = 60_000_000L
+
+        // "Harbor Lights": all 3 tracks completed -- Track.isDownloaded()
+        // requires every track in the book to be STATE_COMPLETED.
+        for (i in 0..2) {
+            putFakeDownload(
+                downloadIndex,
+                "screenshot-downloaded-track-$i",
+                Download.STATE_COMPLETED,
+                perTrackBytes,
+                perTrackBytes,
+                100f
+            )
+        }
+
+        // "Midnight Static": one track done, one mid-flight, one queued --
+        // isDownloading() only needs one DOWNLOADING track, and this also
+        // gives AudiobookProgressCalculator a realistic ~50% to display.
+        putFakeDownload(
+            downloadIndex, "screenshot-downloading-track-0",
+            Download.STATE_COMPLETED, perTrackBytes, perTrackBytes, 100f
+        )
+        putFakeDownload(
+            downloadIndex, "screenshot-downloading-track-1",
+            Download.STATE_DOWNLOADING, perTrackBytes, perTrackBytes / 2, 50f
+        )
+        putFakeDownload(
+            downloadIndex, "screenshot-downloading-track-2",
+            Download.STATE_QUEUED, perTrackBytes, 0L, 0f
+        )
     }
 
+    @OptIn(UnstableApi::class)
     @After
     fun removeFakeLibrary() = runBlocking {
         for (id in seededIds) {
             database().libraryItemDao().getLibraryItemById(id)?.let {
                 database().libraryItemDao().deleteLibraryItem(it)
             }
+        }
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val downloadIndex = DefaultDownloadIndex(StandaloneDatabaseProvider(targetContext))
+        for (trackId in fakeDownloadTrackIds) {
+            downloadIndex.removeDownload(trackId)
         }
     }
 
@@ -200,12 +341,67 @@ class ScreenshotWalkTest {
         Log.i("ScreenshotWalkTest", "$name: wrote screenshot to $uri")
     }
 
+    // Finds a Book List row via its SwipeToRevealCard's testTag (see
+    // BookListActivity: Modifier.testTag("book_row_$itemId") plus
+    // testTagsAsResourceId on the enclosing Scaffold, the officially
+    // documented way to hand UiAutomator a precise hook into a Compose
+    // subtree: https://developer.android.com/develop/ui/compose/testing/interoperability).
+    // Six earlier attempts at this same reveal, all built on locating the
+    // row by its title TEXT and hand-computing swipe coordinates from
+    // whatever ancestor bounds looked plausible, were unreliable in ways
+    // that never fully made sense (one row worked, another identical-looking
+    // one didn't, regardless of speed/timing/edge-position fixes). Finding
+    // the actual swipeable element by id and using its own built-in
+    // UiObject2.swipe(Direction, percent) -- calibrated against that
+    // element's real bounds, not a guess -- is the documented alternative.
+    private fun swipeRowOpen(itemId: String): Boolean {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        Thread.sleep(1_500)
+        val resourceName = "book_row_$itemId"
+        var row = device.wait(Until.findObject(By.res(resourceName)), 2_000)
+        var attempts = 0
+        while (row == null && attempts < 6) {
+            val width = device.displayWidth
+            val height = device.displayHeight
+            device.swipe(width / 2, (height * 0.8).toInt(), width / 2, (height * 0.2).toInt(), 20)
+            Thread.sleep(300)
+            row = device.wait(Until.findObject(By.res(resourceName)), 1_000)
+            attempts++
+        }
+        if (row == null) {
+            Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find '$resourceName' after scrolling")
+            return false
+        }
+        Log.i("ScreenshotWalkTest", "swipeRowOpen: '$resourceName' bounds=${row.visibleBounds}")
+        row.swipe(Direction.LEFT, 0.6f)
+        Thread.sleep(800)
+        return true
+    }
+
     @Test
     fun captureKeyScreens() {
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
 
         ActivityScenario.launch(BookListActivity::class.java).use {
             takeScreenshot(it, "01_book_list")
+        }
+
+        ActivityScenario.launch(BookListActivity::class.java).use {
+            if (swipeRowOpen(notStartedItemId)) {
+                takeScreenshot(it, "01b_book_list_swipe_download")
+            }
+        }
+
+        ActivityScenario.launch(BookListActivity::class.java).use {
+            if (swipeRowOpen(downloadingItemId)) {
+                takeScreenshot(it, "01c_book_list_swipe_downloading")
+            }
+        }
+
+        ActivityScenario.launch(BookListActivity::class.java).use {
+            if (swipeRowOpen(downloadedItemId)) {
+                takeScreenshot(it, "01d_book_list_swipe_delete")
+            }
         }
 
         // The "id" extra has to be on the launch Intent itself, not set on the
@@ -218,11 +414,25 @@ class ScreenshotWalkTest {
             takeScreenshot(it, "02_chapter_list")
         }
 
+        ActivityScenario.launch<ChapterListActivity>(
+            Intent(targetContext, ChapterListActivity::class.java)
+                .putExtra("id", downloadingItemId)
+        ).use {
+            takeScreenshot(it, "02b_chapter_list_downloading")
+        }
+
         ActivityScenario.launch<BookManagementActivity>(
             Intent(targetContext, BookManagementActivity::class.java)
                 .putExtra("id", continueListeningItemId)
         ).use {
             takeScreenshot(it, "03_book_management")
+        }
+
+        ActivityScenario.launch<BookManagementActivity>(
+            Intent(targetContext, BookManagementActivity::class.java)
+                .putExtra("id", downloadedItemId)
+        ).use {
+            takeScreenshot(it, "03b_book_management_downloaded")
         }
 
         ActivityScenario.launch(SettingsActivity::class.java).use {
