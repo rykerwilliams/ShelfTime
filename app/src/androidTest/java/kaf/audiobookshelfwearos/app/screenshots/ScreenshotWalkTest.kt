@@ -338,8 +338,17 @@ class ScreenshotWalkTest {
         val bounds = row.visibleBounds
         val y = bounds.centerY()
         val screenWidth = device.displayWidth
-        device.swipe(screenWidth - 10, y, 20, y, 40)
-        Thread.sleep(500)
+        Log.i(
+            "ScreenshotWalkTest",
+            "swipeRowOpen: '$title' bounds=$bounds screen=${screenWidth}x${device.displayHeight}"
+        )
+        // A fast synthetic swipe risks being read as an attempted vertical
+        // scroll (this row lives inside a vertically scrollable list) rather
+        // than a deliberate horizontal drag -- a slower, higher-step-count
+        // swipe is closer to a real human drag and less likely to be
+        // misread by Compose's gesture detector.
+        device.swipe(screenWidth - 5, y, 5, y, 100)
+        Thread.sleep(800)
         return true
     }
 
