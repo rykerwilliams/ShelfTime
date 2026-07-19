@@ -70,9 +70,20 @@ jobs:
           script: |
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
+            adb logcat -c
             ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=kaf.audiobookshelfwearos.app.screenshots.ScreenshotWalkTest
             mkdir -p docs/screenshots
-            adb pull /sdcard/Android/data/kaf.audiobookshelfwearos/files/screenshots/. docs/screenshots/
+            echo "===== logcat: ScreenshotWalkTest tag ====="
+            adb logcat -d | grep -i "ScreenshotWalkTest" || echo "(no matching logcat lines)"
+            # The app-private /Android/data/<pkg>/files tree is invisible to
+            # adb pull/find under scoped storage, even with root adb, and
+            # run-as reports "unknown package" on this Wear image -- so the
+            # test now publishes screenshots via MediaStore into a public
+            # Pictures/ collection instead, which plain adb pull can read.
+            echo "===== pulling screenshots from public Pictures dir ====="
+            adb pull /sdcard/Pictures/ShelfTimeScreenshots/. docs/screenshots/ || echo "pull failed"
+            echo "===== docs/screenshots contents ====="
+            ls -la docs/screenshots/ || true
 
       - name: Commit and push screenshots
         run: |
