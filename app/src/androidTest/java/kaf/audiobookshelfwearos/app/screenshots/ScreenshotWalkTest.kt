@@ -36,6 +36,7 @@ import kaf.audiobookshelfwearos.app.data.Media
 import kaf.audiobookshelfwearos.app.data.Metadata
 import kaf.audiobookshelfwearos.app.data.Track
 import kaf.audiobookshelfwearos.app.data.UserMediaProgress
+import kaf.audiobookshelfwearos.app.services.MyDownloadService
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -214,6 +215,16 @@ class ScreenshotWalkTest {
         downloadingItemId = items[3].id
 
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        // DownloadManager.initialize() unconditionally calls
+        // downloadIndex.setDownloadingStatesToQueued() the first time it's
+        // ever constructed in this process (Media3's own defensive reset
+        // for downloads that were "in progress" before a restart, when no
+        // real downloader thread exists yet to resume them). Force that
+        // one-time construction now, against an empty index, so it doesn't
+        // silently flip the fake DOWNLOADING record we're about to insert
+        // back to QUEUED the first time some other screen (e.g. Book List)
+        // triggers the same lazy singleton later in this test.
+        MyDownloadService.getDownloadManager(targetContext)
         val downloadIndex = DefaultDownloadIndex(StandaloneDatabaseProvider(targetContext))
         val perTrackBytes = 60_000_000L
 
