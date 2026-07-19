@@ -100,6 +100,7 @@ import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
 import kaf.audiobookshelfwearos.app.utils.DownloadBudgetChecker
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.ItemTrackResolver
+import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kaf.audiobookshelfwearos.app.utils.StorageUtils
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kotlinx.coroutines.delay
@@ -631,6 +632,21 @@ class BookListActivity : ComponentActivity() {
                 // starting anything. Fetch full track data first when needed.
                 coroutineScope.launch {
                     try {
+                        // Checked before resolveItemWithTracks() (which can itself hit
+                        // the network to fetch an expanded item) so an offline tap
+                        // gets an immediate, accurate reason instead of either hanging
+                        // on that fetch or, worse, silently queueing: sendAddDownload()
+                        // sets no Requirements on its DownloadRequest, so Media3
+                        // defaults to requiring network and just parks the download in
+                        // STATE_QUEUED with no user-visible signal that it's stalled.
+                        if (!NetworkConnectivityManager(this@BookListActivity) {}.isNetworkAvailable()) {
+                            Toast.makeText(
+                                this@BookListActivity,
+                                "No internet connection -- connect and try again",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            return@launch
+                        }
                         val fullItem = resolveItemWithTracks(item)
                         if (fullItem == null) {
                             Toast.makeText(
