@@ -75,23 +75,13 @@ jobs:
             mkdir -p docs/screenshots
             echo "===== logcat: ScreenshotWalkTest tag ====="
             adb logcat -d | grep -i "ScreenshotWalkTest" || echo "(no matching logcat lines)"
-            # Confirmed via the logcat dump above that the app itself writes
-            # successfully to /storage/emulated/0/Android/data/<pkg>/files/screenshots/.
-            # Scoped storage (Android 11+) blocks shell/root from directly
-            # listing or pulling another app's /Android/data subtree -- even
-            # `adb root` couldn't see it in an earlier diagnostic run. The
-            # supported workaround is running the read as the app itself via
-            # `run-as`, streamed out as a tar so adb pull's per-file overhead
-            # (and its inability to use run-as at all) doesn't matter.
-            echo "===== probing run-as directly (adb shell, not exec-out, so stdout/stderr aren't merged) ====="
-            adb shell run-as kaf.audiobookshelfwearos id 2>&1 || true
-            adb shell run-as kaf.audiobookshelfwearos ls -la /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots/ 2>&1 || true
-            echo "===== pulling screenshots via run-as + tar ====="
-            adb exec-out run-as kaf.audiobookshelfwearos tar -cf - -C /storage/emulated/0/Android/data/kaf.audiobookshelfwearos/files/screenshots . > /tmp/screenshots.tar
-            echo "tar file size:"
-            ls -la /tmp/screenshots.tar
-            tar -tf /tmp/screenshots.tar
-            tar -xf /tmp/screenshots.tar -C docs/screenshots/ || echo "extraction failed"
+            # The app-private /Android/data/<pkg>/files tree is invisible to
+            # adb pull/find under scoped storage, even with root adb, and
+            # run-as reports "unknown package" on this Wear image -- so the
+            # test now publishes screenshots via MediaStore into a public
+            # Pictures/ collection instead, which plain adb pull can read.
+            echo "===== pulling screenshots from public Pictures dir ====="
+            adb pull /sdcard/Pictures/ShelfTimeScreenshots/. docs/screenshots/ || echo "pull failed"
             echo "===== docs/screenshots contents ====="
             ls -la docs/screenshots/ || true
 

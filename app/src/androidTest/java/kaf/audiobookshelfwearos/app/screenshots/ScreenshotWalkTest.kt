@@ -2,10 +2,12 @@ package kaf.audiobookshelfwearos.app.screenshots
 
 import android.Manifest
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
+import android.provider.MediaStore
 import android.util.Log
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -28,8 +30,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
-import java.io.FileOutputStream
 
 /**
  * Not a correctness test -- a documentation-generation walk. Seeds a few
@@ -37,9 +37,10 @@ import java.io.FileOutputStream
  * BookListActivityTapTest's seeding, so there's no dependency on a real
  * Audiobookshelf server), launches each key screen via ActivityScenario, and
  * captures a screenshot of each by drawing the activity's own decorView into
- * a Bitmap via Canvas (see takeScreenshot()'s doc for why this replaced
- * UiAutomation.takeScreenshot()). Deliberately NOT the Compose UI testing
- * APIs (createEmptyComposeRule(), onNodeWithText(), etc.), which is the one
+ * a Bitmap via Canvas, then publishing it via MediaStore (see
+ * takeScreenshot()'s doc for why both of those replaced more obvious first
+ * attempts). Deliberately NOT the Compose UI testing APIs
+ * (createEmptyComposeRule(), onNodeWithText(), etc.), which is the one
  * dependency that caused BookListActivityTapTest's unexplained "Failed to
  * instantiate test runner class" failures across four straight CI pushes.
  *
@@ -147,16 +148,21 @@ class ScreenshotWalkTest {
         }
     }
 
-    // A prior run on this project's headless CI emulator found zero PNGs
-    // anywhere on the device (checked /data, /sdcard, /storage with root adb)
-    // despite the test reporting 0 failures -- UiAutomation.takeScreenshot()
-    // has a quiet `?: return` and was silently returning null every time,
-    // almost certainly because this software-rendered emulator can't service
-    // a SurfaceFlinger frame-buffer readback (logcat showed repeated "Failed
-    // to find ColorBuffer" errors during the test run). Drawing the
-    // activity's own root View into a Bitmap via Canvas sidesteps the
-    // display/frame-buffer pipeline entirely and only depends on the View
-    // hierarchy actually being laid out, which it is after RESUMED.
+    // Two things had to be fixed to get a real screenshot out of this
+    // headless CI emulator:
+    // 1. UiAutomation.takeScreenshot() silently returned null on every call
+    //    (it has a quiet `?: return`), almost certainly because this
+    //    software-rendered emulator can't service a SurfaceFlinger
+    //    frame-buffer readback (logcat showed repeated "Failed to find
+    //    ColorBuffer" errors). Drawing the activity's own root View into a
+    //    Bitmap via Canvas sidesteps the display pipeline entirely.
+    // 2. Writing to getExternalFilesDir() (the app-private
+    //    /Android/data/<pkg>/files tree) succeeded on-device, but that whole
+    //    tree is invisible to `adb pull`/`find` under Android 11+ scoped
+    //    storage, even with root adb -- and `run-as`, the normal escape
+    //    hatch, reported "unknown package" on this particular Wear image.
+    //    Inserting via MediaStore into a public Pictures/ collection instead
+    //    isn't subject to that restriction, so plain `adb pull` works.
     private fun takeScreenshot(scenario: ActivityScenario<out Activity>, name: String) {
         // Give Compose a moment to finish rendering after the activity reaches
         // RESUMED -- there's no test-framework idling resource here (deliberately
@@ -177,13 +183,21 @@ class ScreenshotWalkTest {
             }
         }
         val captured = bitmap ?: return
-        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
-        val dir = File(targetContext.getExternalFilesDir(null), "screenshots")
-        dir.mkdirs()
-        FileOutputStream(File(dir, "$name.png")).use { out ->
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ShelfTimeScreenshots")
+        }
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) {
+            Log.e("ScreenshotWalkTest", "$name: MediaStore insert failed")
+            return
+        }
+        resolver.openOutputStream(uri)?.use { out ->
             captured.compress(Bitmap.CompressFormat.PNG, 100, out)
         }
-        Log.i("ScreenshotWalkTest", "$name: wrote screenshot to ${File(dir, "$name.png")}")
+        Log.i("ScreenshotWalkTest", "$name: wrote screenshot to $uri")
     }
 
     @Test
