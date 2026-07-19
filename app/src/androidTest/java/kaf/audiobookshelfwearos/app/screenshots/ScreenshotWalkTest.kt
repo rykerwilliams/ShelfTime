@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.exoplayer.offline.DefaultDownloadIndex
 import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadProgress as Media3DownloadProgress
 import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.WritableDownloadIndex
@@ -215,16 +216,27 @@ class ScreenshotWalkTest {
         downloadingItemId = items[3].id
 
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
-        // DownloadManager.initialize() unconditionally calls
-        // downloadIndex.setDownloadingStatesToQueued() the first time it's
-        // ever constructed in this process (Media3's own defensive reset
-        // for downloads that were "in progress" before a restart, when no
-        // real downloader thread exists yet to resume them). Force that
-        // one-time construction now, against an empty index, so it doesn't
-        // silently flip the fake DOWNLOADING record we're about to insert
-        // back to QUEUED the first time some other screen (e.g. Book List)
-        // triggers the same lazy singleton later in this test.
-        MyDownloadService.getDownloadManager(targetContext)
+        // DownloadManager's constructor queues its initialize() work onto a
+        // dedicated background HandlerThread and returns immediately --
+        // initialize() unconditionally calls
+        // downloadIndex.setDownloadingStatesToQueued() (Media3's own
+        // defensive reset for downloads that were "in progress" before a
+        // restart, since no real downloader thread exists yet to resume
+        // them), and only fires Listener.onInitialized() on the main thread
+        // once that finishes. Just calling getDownloadManager() and moving
+        // on isn't enough -- the reset can still run *after* we've already
+        // inserted the fake DOWNLOADING record, clobbering it. Block until
+        // onInitialized() actually fires before seeding anything.
+        val downloadManager = MyDownloadService.getDownloadManager(targetContext)
+        if (!downloadManager.isInitialized) {
+            val initLatch = java.util.concurrent.CountDownLatch(1)
+            downloadManager.addListener(object : DownloadManager.Listener {
+                override fun onInitialized(dm: DownloadManager) {
+                    initLatch.countDown()
+                }
+            })
+            initLatch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        }
         val downloadIndex = DefaultDownloadIndex(StandaloneDatabaseProvider(targetContext))
         val perTrackBytes = 60_000_000L
 
