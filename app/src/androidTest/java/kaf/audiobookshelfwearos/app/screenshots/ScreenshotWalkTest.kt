@@ -367,6 +367,21 @@ class ScreenshotWalkTest {
             Log.e("ScreenshotWalkTest", "swipeRowOpen: couldn't find row for '$title' after scrolling")
             return false
         }
+        // 'Silent Orbit' still failed after the settle-delay fix, and its
+        // logged bounds put it right at the very bottom edge of the screen
+        // (within ~20px of the display height) -- likely a partially
+        // clipped touch target. A small unconditional nudge-scroll pushes
+        // whatever's found up away from the edge before we re-locate and
+        // swipe it, without materially changing which row we're targeting.
+        val width = device.displayWidth
+        val height = device.displayHeight
+        device.swipe(width / 2, (height * 0.6).toInt(), width / 2, (height * 0.45).toInt(), 20)
+        Thread.sleep(300)
+        row = device.wait(Until.findObject(By.textContains(title)), 2_000)
+        if (row == null) {
+            Log.e("ScreenshotWalkTest", "swipeRowOpen: lost '$title' after nudge-scroll")
+            return false
+        }
         // Three prior attempts (raw edge-to-edge at two speeds, then the
         // widest-ancestor's bounds, which turned out to span multiple rows
         // at once and caused an accidental scroll) all rendered identically
