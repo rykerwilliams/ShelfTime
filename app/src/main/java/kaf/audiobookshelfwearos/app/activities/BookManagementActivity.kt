@@ -49,6 +49,7 @@ import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.AudiobookProgressCalculator
 import kaf.audiobookshelfwearos.app.utils.DownloadBudgetChecker
 import kaf.audiobookshelfwearos.app.utils.DownloadProgressCalculator
+import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
 import kaf.audiobookshelfwearos.app.utils.StorageUtils
 import kaf.audiobookshelfwearos.app.viewmodels.ApiViewModel
 import kotlinx.coroutines.delay
@@ -214,6 +215,19 @@ class BookManagementActivity : ComponentActivity() {
                         isDownloading = false
                     } else {
                         lifecycleScope.launch {
+                            // sendAddDownload() sets no Requirements on its
+                            // DownloadRequest, so Media3 defaults to requiring network
+                            // and just parks a download in STATE_QUEUED with no
+                            // user-visible signal that it's stalled -- check up front
+                            // instead of letting that happen silently.
+                            if (!NetworkConnectivityManager(this@BookManagementActivity) {}.isNetworkAvailable()) {
+                                Toast.makeText(
+                                    this@BookManagementActivity,
+                                    "No internet connection -- connect and try again",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                return@launch
+                            }
                             // Checked unconditionally -- unlike the Smart Delete
                             // budget below, no setting can make the physical disk
                             // bigger.
