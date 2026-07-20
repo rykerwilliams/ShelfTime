@@ -83,7 +83,7 @@ android {
 dependencies {
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("com.google.firebase:firebase-crashlytics:20.0.1")
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.8.4"
     implementation("androidx.room:room-runtime:$roomVersion")
     annotationProcessor("androidx.room:room-compiler:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
