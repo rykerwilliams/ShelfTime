@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id ("kotlin-kapt")
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")
@@ -72,9 +73,6 @@ android {
         buildConfig = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.15"
-    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -85,7 +83,7 @@ android {
 dependencies {
     implementation("androidx.wear:wear-tooling-preview:1.0.0")
     implementation("com.google.firebase:firebase-crashlytics:20.0.1")
-    val roomVersion = "2.6.1"
+    val roomVersion = "2.8.4"
     implementation("androidx.room:room-runtime:$roomVersion")
     annotationProcessor("androidx.room:room-compiler:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
@@ -121,6 +119,8 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.media3:media3-session:1.8.0")
     implementation ("androidx.wear:wear-ongoing:1.1.0")
+    implementation("androidx.wear.tiles:tiles:1.6.0")
+    implementation("androidx.wear.protolayout:protolayout-material3:1.4.0")
     // Includes LocusIdCompat and new Notification categories for Ongoing Activity.
     implementation ("androidx.core:core:1.17.0")
     implementation("androidx.wear:wear-input:1.2.0")

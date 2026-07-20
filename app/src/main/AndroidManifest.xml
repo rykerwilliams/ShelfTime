@@ -43,7 +43,7 @@
 
         <activity
             android:name=".app.activities.BookListActivity"
-            android:exported="false"
+            android:exported="true"
             android:launchMode="singleTop" />
         <activity
             android:name=".app.activities.ChapterListActivity"
@@ -59,6 +59,18 @@
         <activity
             android:name=".app.activities.SettingsActivity"
             android:exported="false" />
+
+        <service
+            android:name=".app.tiles.ContinueListeningTileService"
+            android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/splash_icon" />
+        </service>
 
         <receiver
             android:name="androidx.media3.session.MediaButtonReceiver"

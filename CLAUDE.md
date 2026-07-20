@@ -60,6 +60,36 @@ is feasible.
 
 ## Known deferred / backlog items
 
+- **"Continue Listening" Tile** (Phase 1 shipped, phases 2-5 not started): a Wear OS
+  Tile (swipe over from the watch face) surfacing the same "what should I continue"
+  info Book List already shows, so a book can be resumed without opening the app.
+  Uses `androidx.wear.tiles`/`androidx.wear.protolayout` (Tiles 1.6.0, ProtoLayout
+  Material3 1.4.0) — a new API surface for this codebase, distinct from Compose (no
+  arbitrary composables, a separate declarative layout system). Required flipping
+  `BookListActivity` to `android:exported="true"`, since a Tile's `LaunchAction` is
+  fired by the system's tile-host process and needs an externally-launchable target
+  activity (same requirement Android's own Tiles codelab has for its sample
+  `MainActivity`) — low risk here specifically because `BookListActivity` doesn't
+  read any Intent extras. Planned phases:
+  1. **Shipped** — `ContinueListeningTileService`: an empty-state tile ("Open
+     ShelfTime" button → `BookListActivity`), proving the tile registers/pins/binds
+     end-to-end before wiring in real data.
+  2. Wire in real Continue Listening data: reuse `ContinueListeningSelector.select(...)`
+     against `MainApp.database.libraryItemDao().getAllLibraryItems()`, take the single
+     most-recent item, show title/author, tap resumes via `PlayerActivity` +
+     `putExtra("id", item.id)` (same intent shape `ChapterListActivity` already uses)
+     — this second target activity will also need `android:exported="true"`.
+  3. Cover art: fetch via Coil's existing `ImageLoader`/cache (same one `AsyncImage`
+     already populates) inside `onTileResourcesRequest`, cache-only with a short
+     timeout — no live network fetch inside a Tile callback. Falls back to a
+     placeholder icon if not cached.
+  4. Keep it fresh: call `TileService.getUpdater(context).requestUpdate(...)` from
+     `PlayerService`'s real progress-save checkpoints (pause, track change, book
+     finished) — not on every second of playback, just state transitions.
+  5. Instrumented test using the Tiles testing library, asserting the built layout
+     contains the expected title text given seeded Room state (same seeding pattern
+     as `ScreenshotWalkTest`) — runs in the same CI Wear OS emulator, no new infra.
+
 - **`SmartDeleteManager.performSmartDelete()`** calls
   `database.libraryItemDao().getAllLibraryItems()` then filters in Kotlin for
   `.isDownloaded(context)`. A real fix would add a persisted "isDownloaded" column to
@@ -133,3 +163,26 @@ extraction (`artist`/`title` params declared as non-null `String` when
 the kind of thing the testing-philosophy change above is meant to catch before
 `main`. Worth remembering next time a change "obviously" compiles: it doesn't,
 until CI says so.
+
+## Kotlin/Room versions (bumped for the Tile Phase 1 commit)
+
+`org.jetbrains.kotlin.android` is now **2.1.20** (was 1.9.25) and `androidx.room` is
+now **2.8.4** (was 2.6.1) — both had to move together. Chain of failures that forced
+this, all only visible via CI (see the testing note above — same lesson, bigger
+blast radius this time):
+1. `androidx.wear.tiles:tiles:1.6.0` / `androidx.wear.protolayout:protolayout-material3:1.4.0`
+   ship Kotlin 2.1.0 metadata; Kotlin 1.9.25's compiler can only read up to 1.9.0, so
+   `kaptGenerateStubsDebugKotlin` failed outright just loading those libraries.
+2. Bumping to Kotlin 2.1.20 fixed that, but moved the Compose compiler out of the
+   Kotlin Gradle plugin (`composeOptions.kotlinCompilerExtensionVersion` is gone as
+   of Kotlin 2.0+) — replaced by applying `org.jetbrains.kotlin.plugin.compose`
+   directly in both the root and `app` `build.gradle.kts`.
+3. That still didn't build: Room 2.6.1's kapt processor bundles a `kotlinx-metadata-jvm`
+   that only reads metadata up to version 2.0.0, so it choked reading our *own*
+   Kotlin 2.1-compiled `@Entity`/`@Dao` classes. Room 2.7.0+ explicitly targets
+   Kotlin 2.0+; bumped to 2.8.4 (latest stable as of this fix).
+4. `--stacktrace` had to be temporarily added to the CI `testDebugUnitTest` step to
+   even see the real `Caused by:` chain for the Room/kapt failure — the default
+   Gradle output only showed the generic `KaptExecutionWorkAction` wrapper. Removed
+   again once diagnosed; worth re-adding first if a future kapt/Kotlin bump fails
+   opaquely again.
