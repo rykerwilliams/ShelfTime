@@ -60,25 +60,42 @@ is feasible.
 
 ## Known deferred / backlog items
 
-- **"Continue Listening" Tile** (Phase 1 shipped, phases 2-5 not started): a Wear OS
+- **"Continue Listening" Tile** (Phases 1-2 shipped, phases 3-5 not started): a Wear OS
   Tile (swipe over from the watch face) surfacing the same "what should I continue"
   info Book List already shows, so a book can be resumed without opening the app.
   Uses `androidx.wear.tiles`/`androidx.wear.protolayout` (Tiles 1.6.0, ProtoLayout
   Material3 1.4.0) — a new API surface for this codebase, distinct from Compose (no
   arbitrary composables, a separate declarative layout system). Required flipping
-  `BookListActivity` to `android:exported="true"`, since a Tile's `LaunchAction` is
-  fired by the system's tile-host process and needs an externally-launchable target
-  activity (same requirement Android's own Tiles codelab has for its sample
-  `MainActivity`) — low risk here specifically because `BookListActivity` doesn't
-  read any Intent extras. Planned phases:
+  `BookListActivity` and `PlayerActivity` to `android:exported="true"`, since a Tile's
+  `LaunchAction` is fired by the system's tile-host process and needs an
+  externally-launchable target activity (same requirement Android's own Tiles
+  codelab has for its sample `MainActivity`) — low risk for `BookListActivity`
+  specifically because it doesn't read any Intent extras; `PlayerActivity` does now
+  (see phase 2 below), but only to resume playback, nothing destructive. Planned
+  phases:
   1. **Shipped** — `ContinueListeningTileService`: an empty-state tile ("Open
      ShelfTime" button → `BookListActivity`), proving the tile registers/pins/binds
      end-to-end before wiring in real data.
-  2. Wire in real Continue Listening data: reuse `ContinueListeningSelector.select(...)`
-     against `MainApp.database.libraryItemDao().getAllLibraryItems()`, take the single
-     most-recent item, show title/author, tap resumes via `PlayerActivity` +
-     `putExtra("id", item.id)` (same intent shape `ChapterListActivity` already uses)
-     — this second target activity will also need `android:exported="true"`.
+  2. **Shipped** — real Continue Listening data: `ContinueListeningTileService` calls
+     `ContinueListeningSelector.select(...)` against
+     `(applicationContext as MainApp).database.libraryItemDao().getAllLibraryItems()`,
+     takes the most-recent item, and shows its title/author on the tile. Tapping
+     launches `PlayerActivity` with `putExtra("id", item.id)`. Two things had to
+     change to make this work:
+     - `TileService.onTileRequest` returns a `ListenableFuture`, not a suspend
+       function, but the DB query is suspend — bridged with
+       `androidx.concurrent:concurrent-futures-ktx`'s `SuspendToFutureAdapter.launchFuture { }`
+       (new dependency; no prior suspend-to-`ListenableFuture` bridge existed in this
+       codebase to reuse).
+     - `PlayerActivity.onCreate()` previously only ever started/bound `PlayerService`
+       assuming some *other* activity (`ChapterListActivity`) had already called
+       `PlayerService.setAudiobook(...)` moments earlier to select the book — it never
+       read any Intent extra itself. A Tile's `LaunchAction`, fired directly by the
+       system, can't make that prior call. Fixed by having `PlayerActivity` check for
+       an `"id"` Intent extra and call a new `PlayerService.setAudiobook(context, id,
+       action = "continue")` overload (id-only, since `PlayerService.onStartCommand`
+       already resolves the full `LibraryItem` from Room via that same `"id"` extra —
+       no second DB query needed in `PlayerActivity`).
   3. Cover art: fetch via Coil's existing `ImageLoader`/cache (same one `AsyncImage`
      already populates) inside `onTileResourcesRequest`, cache-only with a short
      timeout — no live network fetch inside a Tile callback. Falls back to a

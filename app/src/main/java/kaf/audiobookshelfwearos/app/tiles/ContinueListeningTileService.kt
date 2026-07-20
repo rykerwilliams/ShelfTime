@@ -1,5 +1,6 @@
 package kaf.audiobookshelfwearos.app.tiles
 
+import androidx.concurrent.futures.SuspendToFutureAdapter
 import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.DimensionBuilders.expand
 import androidx.wear.protolayout.TimelineBuilders.Timeline
@@ -14,53 +15,72 @@ import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import androidx.wear.tiles.tile
-import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.activities.BookListActivity
+import kaf.audiobookshelfwearos.app.activities.PlayerActivity
+import kaf.audiobookshelfwearos.app.data.LibraryItem
+import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
 
 /**
- * Phase 1 of the "Continue Listening" tile: proves the tile registers and
- * pins end-to-end (system binds it, layout renders, tap opens the app)
- * before wiring in real Continue Listening data, cover art, and progress --
- * see CLAUDE.md's Tiles backlog entry for the follow-up phases.
+ * Phase 2 of the "Continue Listening" tile: shows the title/author of the most
+ * recently-progressed book (same selection logic as Book List's "Continue
+ * Listening" section, via ContinueListeningSelector) and resumes it directly
+ * through PlayerActivity on tap. Falls back to Phase 1's "Open ShelfTime" ->
+ * BookListActivity behavior when there's nothing in progress.
  *
- * BookListActivity had to be flipped to android:exported="true" for the tap
- * target to work -- Tile LaunchActions are fired by the system's tile-host
- * process, so the target activity must be externally launchable, same as
- * Android's own Tiles codelab requires for its sample MainActivity. Low risk
- * here specifically because BookListActivity doesn't read any Intent extras.
+ * See CLAUDE.md's Tiles backlog entry for the remaining phases (cover art,
+ * freshness triggering, instrumented test).
  */
 class ContinueListeningTileService : TileService() {
 
     override fun onTileRequest(
         requestParams: RequestBuilders.TileRequest
-    ): ListenableFuture<TileBuilders.Tile> {
-        val launchBookList = ActionBuilders.LaunchAction.Builder()
-            .setAndroidActivity(
-                ActionBuilders.AndroidActivity.Builder()
-                    .setPackageName(packageName)
-                    .setClassName(BookListActivity::class.java.name)
-                    .build()
-            )
-            .build()
-        val openAppClickable = clickable(id = "open_app", action = launchBookList)
+    ): ListenableFuture<TileBuilders.Tile> = SuspendToFutureAdapter.launchFuture {
+        val item = mostRecentContinueListeningItem()
         val layout = materialScopeWithResources(
-            this,
+            this@ContinueListeningTileService,
             requestParams.scope,
             requestParams.deviceConfiguration
         ) {
             primaryLayout(
                 mainSlot = {
                     button(
-                        onClick = openAppClickable,
+                        onClick = clickable(id = "open_app", action = launchActionFor(item)),
                         width = expand(),
                         height = expand(),
                         colors = filledTonalButtonColors(),
-                        labelContent = { text("Open ShelfTime".layoutString) }
+                        labelContent = { text(labelFor(item).layoutString) },
+                        secondaryLabelContent = item?.author?.let { author ->
+                            { text(author.layoutString) }
+                        }
                     )
                 }
             )
         }
-        return Futures.immediateFuture(tile(Timeline.fromLayoutElement(layout)))
+        tile(Timeline.fromLayoutElement(layout))
+    }
+
+    private suspend fun mostRecentContinueListeningItem(): LibraryItem? {
+        val database = (applicationContext as MainApp).database
+        val items = database.libraryItemDao().getAllLibraryItems()
+        return ContinueListeningSelector.select(items).firstOrNull()
+    }
+
+    private fun labelFor(item: LibraryItem?): String = item?.title ?: "Open ShelfTime"
+
+    private fun launchActionFor(item: LibraryItem?): ActionBuilders.Action {
+        val activityBuilder = ActionBuilders.AndroidActivity.Builder()
+            .setPackageName(packageName)
+        if (item != null) {
+            activityBuilder
+                .setClassName(PlayerActivity::class.java.name)
+                .addKeyToExtraMapping("id", ActionBuilders.stringExtra(item.id))
+        } else {
+            activityBuilder.setClassName(BookListActivity::class.java.name)
+        }
+        return ActionBuilders.LaunchAction.Builder()
+            .setAndroidActivity(activityBuilder.build())
+            .build()
     }
 }

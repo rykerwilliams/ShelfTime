@@ -804,11 +804,21 @@ class PlayerService : MediaSessionService() {
             item: LibraryItem,
             time: Double = -1.0,
             action: String = "default"
+        ) = setAudiobook(context, item.id, time, action)
+
+        // Overload for callers that only have the id (e.g. a Wear OS Tile launch action,
+        // which can't hold a full LibraryItem) -- onStartCommand above already resolves the
+        // full item from Room via this same "id" extra, so no full LibraryItem is needed here.
+        fun setAudiobook(
+            context: Context,
+            id: String,
+            time: Double = -1.0,
+            action: String = "default"
         ) {
             val serviceIntent = Intent(context, PlayerService::class.java).apply {
                 putExtra(
                     "id",
-                    item.id
+                    id
                 )
                 putExtra(
                     "time",

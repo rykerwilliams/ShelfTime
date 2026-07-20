@@ -112,6 +112,13 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Launched directly from the Continue Listening Tile (bypassing ChapterListActivity's
+        // own PlayerService.setAudiobook call before it starts this Activity) -- resume the
+        // given book from wherever its progress last left off.
+        this.intent.getStringExtra("id")?.let { id ->
+            PlayerService.setAudiobook(this, id, action = "continue")
+        }
+
         // Start the PlayerService
         val intent = Intent(this, PlayerService::class.java)
         startForegroundService(intent)
