@@ -1,6 +1,6 @@
 package kaf.audiobookshelfwearos.app.tiles
 
-import android.content.ComponentName
+import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.DimensionBuilders.expand
 import androidx.wear.protolayout.TimelineBuilders.Timeline
 import androidx.wear.protolayout.material3.ButtonDefaults.filledTonalButtonColors
@@ -9,7 +9,6 @@ import androidx.wear.protolayout.material3.materialScopeWithResources
 import androidx.wear.protolayout.material3.primaryLayout
 import androidx.wear.protolayout.material3.text
 import androidx.wear.protolayout.modifiers.clickable
-import androidx.wear.protolayout.modifiers.launchAction
 import androidx.wear.protolayout.types.layoutString
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
@@ -36,10 +35,15 @@ class ContinueListeningTileService : TileService() {
     override fun onTileRequest(
         requestParams: RequestBuilders.TileRequest
     ): ListenableFuture<TileBuilders.Tile> {
-        val openAppClickable = clickable(
-            id = "open_app",
-            action = launchAction(ComponentName(this, BookListActivity::class.java))
-        )
+        val launchBookList = ActionBuilders.LaunchAction.Builder()
+            .setAndroidActivity(
+                ActionBuilders.AndroidActivity.Builder()
+                    .setPackageName(packageName)
+                    .setClassName(BookListActivity::class.java.name)
+                    .build()
+            )
+            .build()
+        val openAppClickable = clickable(id = "open_app", action = launchBookList)
         val layout = materialScopeWithResources(
             this,
             requestParams.scope,
