@@ -8,13 +8,14 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
-import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.exoplayer.offline.DefaultDownloadIndex
@@ -55,6 +56,8 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.AbstractExecutorService
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -373,6 +376,24 @@ class ScreenshotWalkTest {
     // onActivity{}, which would block the very UI thread the completion callback needs) is what
     // avoids a deadlock here; a second onActivity{} block then does the actual measure/layout/
     // draw once inflation has genuinely finished.
+    // ContextCompat.getMainExecutor() returns a plain Executor, but
+    // MoreExecutors.listeningDecorator() only has overloads for ExecutorService (no plain
+    // Executor overload exists) -- so ProtoLayoutViewInstance.Config's ui executor needs a
+    // minimal ExecutorService that actually posts to the main Looper.
+    private fun mainThreadExecutorService(): ExecutorService {
+        val handler = Handler(Looper.getMainLooper())
+        return object : AbstractExecutorService() {
+            override fun execute(command: Runnable) {
+                handler.post(command)
+            }
+            override fun shutdown() {}
+            override fun shutdownNow(): MutableList<Runnable> = mutableListOf()
+            override fun isShutdown(): Boolean = false
+            override fun isTerminated(): Boolean = false
+            override fun awaitTermination(timeout: Long, unit: TimeUnit): Boolean = true
+        }
+    }
+
     private fun captureContinueListeningTile(name: String) {
         val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
         val service = TestableContinueListeningTileService()
@@ -413,7 +434,7 @@ class ScreenshotWalkTest {
                 )
                 container = frame
 
-                val uiExecutor = MoreExecutors.listeningDecorator(ContextCompat.getMainExecutor(activity))
+                val uiExecutor = MoreExecutors.listeningDecorator(mainThreadExecutorService())
                 val bgExecutor = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor())
                 val viewInstance = ProtoLayoutViewInstance(
                     ProtoLayoutViewInstance.Config.Builder(
