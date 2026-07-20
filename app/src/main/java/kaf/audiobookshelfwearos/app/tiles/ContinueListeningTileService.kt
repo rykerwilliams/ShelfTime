@@ -1,10 +1,14 @@
 package kaf.audiobookshelfwearos.app.tiles
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.concurrent.futures.SuspendToFutureAdapter
 import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.DimensionBuilders.expand
+import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders.Timeline
 import androidx.wear.protolayout.material3.ButtonDefaults.filledTonalButtonColors
+import androidx.wear.protolayout.material3.avatarImage
 import androidx.wear.protolayout.material3.button
 import androidx.wear.protolayout.material3.materialScopeWithResources
 import androidx.wear.protolayout.material3.primaryLayout
@@ -21,16 +25,23 @@ import kaf.audiobookshelfwearos.app.activities.BookListActivity
 import kaf.audiobookshelfwearos.app.activities.PlayerActivity
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.utils.ContinueListeningSelector
+import java.io.File
+import java.nio.ByteBuffer
 
 /**
- * Phase 2 of the "Continue Listening" tile: shows the title/author of the most
- * recently-progressed book (same selection logic as Book List's "Continue
- * Listening" section, via ContinueListeningSelector) and resumes it directly
- * through PlayerActivity on tap. Falls back to Phase 1's "Open ShelfTime" ->
- * BookListActivity behavior when there's nothing in progress.
+ * Phase 3 of the "Continue Listening" tile: adds cover art, read cache-only from the same
+ * context.cacheDir/<id>.jpg file ApiViewModel.saveBitmapToCache already populates when Book
+ * List/Chapter List load a cover -- no live network fetch inside this Tile callback, and no
+ * Coil involved (cover art in this app is a hand-rolled OkHttp + file-cache pipeline, not a
+ * Coil-managed cache, despite what the original backlog note assumed).
  *
- * See CLAUDE.md's Tiles backlog entry for the remaining phases (cover art,
- * freshness triggering, instrumented test).
+ * avatarImage(resource = ..., protoLayoutResourceId = ...) auto-registers the resource through
+ * the ProtoLayoutScope threaded in via materialScopeWithResources -- confirmed from
+ * androidx.wear.tiles.TileService's own source: when a scope has resources, the framework sends
+ * them bundled with the tile data itself, so no onTileResourcesRequest override is needed here.
+ *
+ * See CLAUDE.md's Tiles backlog entry for the remaining phases (freshness triggering,
+ * instrumented test).
  */
 class ContinueListeningTileService : TileService() {
 
@@ -38,6 +49,7 @@ class ContinueListeningTileService : TileService() {
         requestParams: RequestBuilders.TileRequest
     ): ListenableFuture<TileBuilders.Tile> = SuspendToFutureAdapter.launchFuture {
         val item = mostRecentContinueListeningItem()
+        val coverResource = item?.let { coverImageResource(it.id) }
         val layout = materialScopeWithResources(
             this@ContinueListeningTileService,
             requestParams.scope,
@@ -53,6 +65,14 @@ class ContinueListeningTileService : TileService() {
                         labelContent = { text(labelFor(item).layoutString) },
                         secondaryLabelContent = item?.author?.let { author ->
                             { text(author.layoutString) }
+                        },
+                        iconContent = coverResource?.let { resource ->
+                            {
+                                avatarImage(
+                                    resource = resource,
+                                    protoLayoutResourceId = COVER_RESOURCE_ID
+                                )
+                            }
                         }
                     )
                 }
@@ -82,5 +102,43 @@ class ContinueListeningTileService : TileService() {
         return ActionBuilders.LaunchAction.Builder()
             .setAndroidActivity(activityBuilder.build())
             .build()
+    }
+
+    private fun coverImageResource(itemId: String): ResourceBuilders.ImageResource? {
+        val file = File(applicationContext.cacheDir, "$itemId.jpg")
+        if (!file.exists()) return null
+        val decoded = BitmapFactory.decodeFile(file.path) ?: return null
+        val square = squareBitmap(decoded, COVER_TILE_SIZE_PX)
+        val argb = if (square.config == Bitmap.Config.ARGB_8888) {
+            square
+        } else {
+            square.copy(Bitmap.Config.ARGB_8888, false)
+        }
+        val buffer = ByteBuffer.allocate(argb.byteCount)
+        argb.copyPixelsToBuffer(buffer)
+        val inlineResource = ResourceBuilders.InlineImageResource.Builder()
+            .setData(buffer.array())
+            .setWidthPx(COVER_TILE_SIZE_PX)
+            .setHeightPx(COVER_TILE_SIZE_PX)
+            .setFormat(ResourceBuilders.IMAGE_FORMAT_ARGB_8888)
+            .build()
+        return ResourceBuilders.ImageResource.Builder()
+            .setInlineResource(inlineResource)
+            .build()
+    }
+
+    // Cover art is cached for Book List at full display size -- crop to a center square and
+    // downscale, since the tile only needs a small avatar-sized icon.
+    private fun squareBitmap(source: Bitmap, size: Int): Bitmap {
+        val cropSize = minOf(source.width, source.height)
+        val x = (source.width - cropSize) / 2
+        val y = (source.height - cropSize) / 2
+        val cropped = Bitmap.createBitmap(source, x, y, cropSize, cropSize)
+        return Bitmap.createScaledBitmap(cropped, size, size, true)
+    }
+
+    companion object {
+        private const val COVER_RESOURCE_ID = "cover_art"
+        private const val COVER_TILE_SIZE_PX = 64
     }
 }
