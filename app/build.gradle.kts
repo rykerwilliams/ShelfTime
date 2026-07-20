@@ -121,6 +121,8 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.media3:media3-session:1.8.0")
     implementation ("androidx.wear:wear-ongoing:1.1.0")
+    implementation("androidx.wear.tiles:tiles:1.6.0")
+    implementation("androidx.wear.protolayout:protolayout-material3:1.4.0")
     // Includes LocusIdCompat and new Notification categories for Ongoing Activity.
     implementation ("androidx.core:core:1.17.0")
     implementation("androidx.wear:wear-input:1.2.0")

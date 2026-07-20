@@ -60,6 +60,36 @@ is feasible.
 
 ## Known deferred / backlog items
 
+- **"Continue Listening" Tile** (Phase 1 shipped, phases 2-5 not started): a Wear OS
+  Tile (swipe over from the watch face) surfacing the same "what should I continue"
+  info Book List already shows, so a book can be resumed without opening the app.
+  Uses `androidx.wear.tiles`/`androidx.wear.protolayout` (Tiles 1.6.0, ProtoLayout
+  Material3 1.4.0) — a new API surface for this codebase, distinct from Compose (no
+  arbitrary composables, a separate declarative layout system). Required flipping
+  `BookListActivity` to `android:exported="true"`, since a Tile's `LaunchAction` is
+  fired by the system's tile-host process and needs an externally-launchable target
+  activity (same requirement Android's own Tiles codelab has for its sample
+  `MainActivity`) — low risk here specifically because `BookListActivity` doesn't
+  read any Intent extras. Planned phases:
+  1. **Shipped** — `ContinueListeningTileService`: an empty-state tile ("Open
+     ShelfTime" button → `BookListActivity`), proving the tile registers/pins/binds
+     end-to-end before wiring in real data.
+  2. Wire in real Continue Listening data: reuse `ContinueListeningSelector.select(...)`
+     against `MainApp.database.libraryItemDao().getAllLibraryItems()`, take the single
+     most-recent item, show title/author, tap resumes via `PlayerActivity` +
+     `putExtra("id", item.id)` (same intent shape `ChapterListActivity` already uses)
+     — this second target activity will also need `android:exported="true"`.
+  3. Cover art: fetch via Coil's existing `ImageLoader`/cache (same one `AsyncImage`
+     already populates) inside `onTileResourcesRequest`, cache-only with a short
+     timeout — no live network fetch inside a Tile callback. Falls back to a
+     placeholder icon if not cached.
+  4. Keep it fresh: call `TileService.getUpdater(context).requestUpdate(...)` from
+     `PlayerService`'s real progress-save checkpoints (pause, track change, book
+     finished) — not on every second of playback, just state transitions.
+  5. Instrumented test using the Tiles testing library, asserting the built layout
+     contains the expected title text given seeded Room state (same seeding pattern
+     as `ScreenshotWalkTest`) — runs in the same CI Wear OS emulator, no new infra.
+
 - **`SmartDeleteManager.performSmartDelete()`** calls
   `database.libraryItemDao().getAllLibraryItems()` then filters in Kotlin for
   `.isDownloaded(context)`. A real fix would add a persisted "isDownloaded" column to
