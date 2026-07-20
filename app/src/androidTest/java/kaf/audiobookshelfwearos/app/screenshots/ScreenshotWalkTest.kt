@@ -3,9 +3,12 @@ package kaf.audiobookshelfwearos.app.screenshots
 import android.Manifest
 import android.app.Activity
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -33,6 +36,7 @@ import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import androidx.wear.protolayout.DeviceParametersBuilders
+import androidx.wear.protolayout.renderer.ProtoLayoutTheme
 import androidx.wear.protolayout.renderer.impl.ProtoLayoutViewInstance
 import androidx.wear.tiles.RequestBuilders
 import com.google.common.util.concurrent.ListenableFuture
@@ -92,6 +96,25 @@ import java.util.concurrent.TimeUnit
  * it's only meant to be run by generate-screenshots.yml's manual
  * workflow_dispatch trigger.
  */
+// Minimal ProtoLayoutTheme for captureContinueListeningTile()'s renderer instance -- see that
+// method's doc for why ProtoLayoutThemeImpl.defaultTheme() (the alternative) doesn't work here.
+// Plain system Typefaces; nothing rendered for a screenshot needs the real Wear Material font.
+private class SystemFontProtoLayoutTheme(private val context: Context) : ProtoLayoutTheme {
+    private val systemFontSet = object : ProtoLayoutTheme.FontSet {
+        override fun getNormalFont(): Typeface = Typeface.DEFAULT
+        override fun getMediumFont(): Typeface = Typeface.DEFAULT_BOLD
+        override fun getBoldFont(): Typeface = Typeface.DEFAULT_BOLD
+    }
+
+    override fun getFontSet(vararg preferredFontFamilies: String): ProtoLayoutTheme.FontSet = systemFontSet
+
+    override fun getTheme(): Resources.Theme = context.theme
+
+    override fun getFallbackTextAppearanceResId(): Int = 0
+
+    override fun getRippleResId(): Int = 0
+}
+
 @RunWith(AndroidJUnit4::class)
 class ScreenshotWalkTest {
 
@@ -442,7 +465,17 @@ class ScreenshotWalkTest {
                         uiExecutor,
                         bgExecutor,
                         "screenshot_clickable_id"
-                    ).build()
+                    )
+                        // ProtoLayoutThemeImpl.defaultTheme() (used if this isn't set) throws
+                        // "Unknown resource value type 0" trying to resolve its own bundled
+                        // font-family theme attributes against this app's plain
+                        // Theme.DeviceDefault-themed Activity -- it's built for the real Wear OS
+                        // tile-host process, which presumably provides those attributes some
+                        // other way. A minimal theme using plain system Typefaces directly
+                        // sidesteps that attribute-resolution path entirely; nothing here needs
+                        // the real Wear Material font.
+                        .setProtoLayoutTheme(SystemFontProtoLayoutTheme(activity))
+                        .build()
                 )
                 instance = viewInstance
                 renderFuture = viewInstance.renderAndAttach(layout.toProto(), resources.toProto(), frame)
