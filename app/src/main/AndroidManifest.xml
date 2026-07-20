@@ -55,7 +55,7 @@
             android:launchMode="singleTop" />
         <activity
             android:name=".app.activities.PlayerActivity"
-            android:exported="false" />
+            android:exported="true" />
         <activity
             android:name=".app.activities.SettingsActivity"
             android:exported="false" />
