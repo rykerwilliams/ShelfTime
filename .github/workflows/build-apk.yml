@@ -55,7 +55,7 @@ jobs:
         run: gradle wrapper --gradle-version 8.13
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: ./gradlew testDebugUnitTest
 
       - name: Generate coverage report
         run: ./gradlew jacocoTestReport

@@ -163,3 +163,26 @@ extraction (`artist`/`title` params declared as non-null `String` when
 the kind of thing the testing-philosophy change above is meant to catch before
 `main`. Worth remembering next time a change "obviously" compiles: it doesn't,
 until CI says so.
+
+## Kotlin/Room versions (bumped for the Tile Phase 1 commit)
+
+`org.jetbrains.kotlin.android` is now **2.1.20** (was 1.9.25) and `androidx.room` is
+now **2.8.4** (was 2.6.1) — both had to move together. Chain of failures that forced
+this, all only visible via CI (see the testing note above — same lesson, bigger
+blast radius this time):
+1. `androidx.wear.tiles:tiles:1.6.0` / `androidx.wear.protolayout:protolayout-material3:1.4.0`
+   ship Kotlin 2.1.0 metadata; Kotlin 1.9.25's compiler can only read up to 1.9.0, so
+   `kaptGenerateStubsDebugKotlin` failed outright just loading those libraries.
+2. Bumping to Kotlin 2.1.20 fixed that, but moved the Compose compiler out of the
+   Kotlin Gradle plugin (`composeOptions.kotlinCompilerExtensionVersion` is gone as
+   of Kotlin 2.0+) — replaced by applying `org.jetbrains.kotlin.plugin.compose`
+   directly in both the root and `app` `build.gradle.kts`.
+3. That still didn't build: Room 2.6.1's kapt processor bundles a `kotlinx-metadata-jvm`
+   that only reads metadata up to version 2.0.0, so it choked reading our *own*
+   Kotlin 2.1-compiled `@Entity`/`@Dao` classes. Room 2.7.0+ explicitly targets
+   Kotlin 2.0+; bumped to 2.8.4 (latest stable as of this fix).
+4. `--stacktrace` had to be temporarily added to the CI `testDebugUnitTest` step to
+   even see the real `Caused by:` chain for the Room/kapt failure — the default
+   Gradle output only showed the generic `KaptExecutionWorkAction` wrapper. Removed
+   again once diagnosed; worth re-adding first if a future kapt/Kotlin bump fails
+   opaquely again.
