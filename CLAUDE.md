@@ -60,7 +60,7 @@ is feasible.
 
 ## Known deferred / backlog items
 
-- **"Continue Listening" Tile** (Phases 1-2 shipped, phases 3-5 not started): a Wear OS
+- **"Continue Listening" Tile** (Phases 1-3 shipped, phases 4-5 not started): a Wear OS
   Tile (swipe over from the watch face) surfacing the same "what should I continue"
   info Book List already shows, so a book can be resumed without opening the app.
   Uses `androidx.wear.tiles`/`androidx.wear.protolayout` (Tiles 1.6.0, ProtoLayout
@@ -96,10 +96,27 @@ is feasible.
        action = "continue")` overload (id-only, since `PlayerService.onStartCommand`
        already resolves the full `LibraryItem` from Room via that same `"id"` extra —
        no second DB query needed in `PlayerActivity`).
-  3. Cover art: fetch via Coil's existing `ImageLoader`/cache (same one `AsyncImage`
-     already populates) inside `onTileResourcesRequest`, cache-only with a short
-     timeout — no live network fetch inside a Tile callback. Falls back to a
-     placeholder icon if not cached.
+  3. **Shipped** — cover art, read cache-only, no live network fetch inside the Tile
+     callback. This phase's original plan (reuse Coil's `ImageLoader`/cache) turned
+     out to be based on a wrong assumption: cover art in this app was never actually
+     cached by Coil. `BookListActivity`'s `AsyncImage` is only ever given an
+     already-decoded `Bitmap` (from `ApiViewModel.coverImages`), never a URL/Uri — Coil
+     never performs the fetch or touches its own disk/memory cache for covers. The
+     real cache is a hand-rolled one in `ApiViewModel`/`ApiHandler`: covers are fetched
+     over OkHttp from `/api/items/<id>/cover` and written to
+     `context.cacheDir/<id>.jpg` (`ApiViewModel.saveBitmapToCache`). Phase 3 reads that
+     same file directly (`BitmapFactory.decodeFile`), so no new dependency and no
+     network call was needed — if the file isn't there yet, the tile just omits the
+     icon (button falls back to text-only) rather than fetching. The bitmap is
+     center-cropped to a small square and converted to raw ARGB_8888 bytes (protolayout
+     resources need raw pixel data, not JPEG-encoded bytes) via
+     `ResourceBuilders.InlineImageResource`/`ImageResource`, then rendered with
+     `avatarImage(resource = ..., protoLayoutResourceId = ...)`. That call
+     auto-registers the resource through the `ProtoLayoutScope` already threaded in via
+     `materialScopeWithResources` — confirmed directly from `TileService`'s own source
+     (not just its docs) that when a scope has resources, the framework bundles them
+     with the tile data itself, so `onTileResourcesRequest` never needed to be
+     overridden here at all.
   4. Keep it fresh: call `TileService.getUpdater(context).requestUpdate(...)` from
      `PlayerService`'s real progress-save checkpoints (pause, track change, book
      finished) — not on every second of playback, just state transitions.
