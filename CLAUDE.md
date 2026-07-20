@@ -60,7 +60,7 @@ is feasible.
 
 ## Known deferred / backlog items
 
-- **"Continue Listening" Tile** (Phases 1-3 shipped, phases 4-5 not started): a Wear OS
+- **"Continue Listening" Tile** (Phases 1-4 shipped, phase 5 not started): a Wear OS
   Tile (swipe over from the watch face) surfacing the same "what should I continue"
   info Book List already shows, so a book can be resumed without opening the app.
   Uses `androidx.wear.tiles`/`androidx.wear.protolayout` (Tiles 1.6.0, ProtoLayout
@@ -117,9 +117,15 @@ is feasible.
      (not just its docs) that when a scope has resources, the framework bundles them
      with the tile data itself, so `onTileResourcesRequest` never needed to be
      overridden here at all.
-  4. Keep it fresh: call `TileService.getUpdater(context).requestUpdate(...)` from
-     `PlayerService`'s real progress-save checkpoints (pause, track change, book
-     finished) — not on every second of playback, just state transitions.
+  4. **Shipped** — keep it fresh: `PlayerService` calls a new private
+     `requestContinueListeningTileUpdate()` (`TileService.getUpdater(this).requestUpdate(
+     ContinueListeningTileService::class.java)`) from exactly three real state-transition
+     points in its `ExoPlayer.Listener`/`onIsPlayingChanged`: pause (right after the
+     existing "final save on pause" `saveProgress()` call), track change
+     (`onMediaItemTransition`), and book finished (`Player.STATE_ENDED`). Deliberately
+     *not* wired into `startPeriodicProgressSaving()`'s ~30s loop — that would refresh
+     the tile every few seconds during active playback for no visible benefit, since the
+     tile shows title/author/cover, not a live position.
   5. Instrumented test using the Tiles testing library, asserting the built layout
      contains the expected title text given seeded Room state (same seeding pattern
      as `ScreenshotWalkTest`) — runs in the same CI Wear OS emulator, no new infra.
