@@ -3,13 +3,21 @@ package kaf.audiobookshelfwearos.app.screenshots
 import android.Manifest
 import android.app.Activity
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -27,6 +35,12 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import androidx.wear.protolayout.DeviceParametersBuilders
+import androidx.wear.protolayout.renderer.ProtoLayoutTheme
+import androidx.wear.protolayout.renderer.impl.ProtoLayoutViewInstance
+import androidx.wear.tiles.RequestBuilders
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kaf.audiobookshelfwearos.app.MainApp
 import kaf.audiobookshelfwearos.app.activities.BookListActivity
 import kaf.audiobookshelfwearos.app.activities.BookManagementActivity
@@ -39,12 +53,17 @@ import kaf.audiobookshelfwearos.app.data.Metadata
 import kaf.audiobookshelfwearos.app.data.Track
 import kaf.audiobookshelfwearos.app.data.UserMediaProgress
 import kaf.audiobookshelfwearos.app.services.MyDownloadService
+import kaf.audiobookshelfwearos.app.tiles.TestableContinueListeningTileService
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.AbstractExecutorService
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Not a correctness test -- a documentation-generation walk. Seeds a few
@@ -77,6 +96,25 @@ import org.junit.runner.RunWith
  * it's only meant to be run by generate-screenshots.yml's manual
  * workflow_dispatch trigger.
  */
+// Minimal ProtoLayoutTheme for captureContinueListeningTile()'s renderer instance -- see that
+// method's doc for why ProtoLayoutThemeImpl.defaultTheme() (the alternative) doesn't work here.
+// Plain system Typefaces; nothing rendered for a screenshot needs the real Wear Material font.
+private class SystemFontProtoLayoutTheme(private val context: Context) : ProtoLayoutTheme {
+    private val systemFontSet = object : ProtoLayoutTheme.FontSet {
+        override fun getNormalFont(): Typeface = Typeface.DEFAULT
+        override fun getMediumFont(): Typeface = Typeface.DEFAULT_BOLD
+        override fun getBoldFont(): Typeface = Typeface.DEFAULT_BOLD
+    }
+
+    override fun getFontSet(vararg preferredFontFamilies: String): ProtoLayoutTheme.FontSet = systemFontSet
+
+    override fun getTheme(): Resources.Theme = context.theme
+
+    override fun getFallbackTextAppearanceResId(): Int = 0
+
+    override fun getRippleResId(): Int = 0
+}
+
 @RunWith(AndroidJUnit4::class)
 class ScreenshotWalkTest {
 
@@ -323,7 +361,10 @@ class ScreenshotWalkTest {
                 Log.e("ScreenshotWalkTest", "$name: decorView has zero size ($width x $height), skipping")
             }
         }
-        val captured = bitmap ?: return
+        bitmap?.let { publishScreenshot(it, name) }
+    }
+
+    private fun publishScreenshot(bitmap: Bitmap, name: String) {
         val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
@@ -336,9 +377,133 @@ class ScreenshotWalkTest {
             return
         }
         resolver.openOutputStream(uri)?.use { out ->
-            captured.compress(Bitmap.CompressFormat.PNG, 100, out)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
         }
         Log.i("ScreenshotWalkTest", "$name: wrote screenshot to $uri")
+    }
+
+    // Renders the Continue Listening Tile's built layout into a real View and captures it,
+    // entirely in-process -- no emulator tile carousel / system UI involved, sidestepping the
+    // fragile swipe-based automation that took several tuning passes for Book List's
+    // swipe-to-reveal above. ContinueListeningTileService.onTileRequest is driven directly
+    // (via the TestableContinueListeningTileService double from ContinueListeningTileServiceTest,
+    // reused rather than duplicated), then androidx.wear.protolayout:protolayout-renderer's
+    // ProtoLayoutViewInstance inflates the resulting Layout/Resources into a real View attached
+    // to a throwaway FrameLayout inside BookListActivity's own window (any already-manifested
+    // Activity works as a host; BookListActivity is just the one already launched elsewhere in
+    // this walk) -- then the same view.draw(Canvas) capture technique as everywhere else above.
+    //
+    // renderAndAttach() must be called on the UI thread but returns a ListenableFuture that
+    // completes asynchronously (inflation runs in the background) -- kicking it off inside one
+    // onActivity{} block and awaiting the future from the test thread afterwards (not inside
+    // onActivity{}, which would block the very UI thread the completion callback needs) is what
+    // avoids a deadlock here; a second onActivity{} block then does the actual measure/layout/
+    // draw once inflation has genuinely finished.
+    // ContextCompat.getMainExecutor() returns a plain Executor, but
+    // MoreExecutors.listeningDecorator() only has overloads for ExecutorService (no plain
+    // Executor overload exists) -- so ProtoLayoutViewInstance.Config's ui executor needs a
+    // minimal ExecutorService that actually posts to the main Looper.
+    private fun mainThreadExecutorService(): ExecutorService {
+        val handler = Handler(Looper.getMainLooper())
+        return object : AbstractExecutorService() {
+            override fun execute(command: Runnable) {
+                handler.post(command)
+            }
+            override fun shutdown() {}
+            override fun shutdownNow(): MutableList<Runnable> = mutableListOf()
+            override fun isShutdown(): Boolean = false
+            override fun isTerminated(): Boolean = false
+            override fun awaitTermination(timeout: Long, unit: TimeUnit): Boolean = true
+        }
+    }
+
+    private fun captureContinueListeningTile(name: String) {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val service = TestableContinueListeningTileService()
+        service.attachContext(targetContext.applicationContext)
+
+        val metrics = targetContext.resources.displayMetrics
+        val screenWidthPx = metrics.widthPixels
+        val screenHeightPx = metrics.heightPixels
+        val deviceParameters = DeviceParametersBuilders.DeviceParameters.Builder()
+            .setScreenWidthDp((screenWidthPx / metrics.density).toInt())
+            .setScreenHeightDp((screenHeightPx / metrics.density).toInt())
+            .setScreenDensity(metrics.density)
+            .setScreenShape(DeviceParametersBuilders.SCREEN_SHAPE_ROUND)
+            .setFontScale(1.0f)
+            .build()
+        val requestParams = RequestBuilders.TileRequest.Builder()
+            .setDeviceConfiguration(deviceParameters)
+            .build()
+
+        val tile = service.onTileRequest(requestParams).get(10, TimeUnit.SECONDS)
+        val layout = tile.tileTimeline?.timelineEntries?.firstOrNull()?.layout
+        if (layout == null) {
+            Log.e("ScreenshotWalkTest", "$name: tile had no layout, skipping")
+            return
+        }
+        val resources = requestParams.scope.collectResources()
+
+        ActivityScenario.launch(BookListActivity::class.java).use { scenario ->
+            var container: FrameLayout? = null
+            var instance: ProtoLayoutViewInstance? = null
+            var renderFuture: ListenableFuture<Void>? = null
+
+            scenario.onActivity { activity ->
+                val frame = FrameLayout(activity)
+                (activity.window.decorView as ViewGroup).addView(
+                    frame,
+                    ViewGroup.LayoutParams(screenWidthPx, screenHeightPx)
+                )
+                container = frame
+
+                val uiExecutor = MoreExecutors.listeningDecorator(mainThreadExecutorService())
+                val bgExecutor = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor())
+                val viewInstance = ProtoLayoutViewInstance(
+                    ProtoLayoutViewInstance.Config.Builder(
+                        activity,
+                        uiExecutor,
+                        bgExecutor,
+                        "screenshot_clickable_id"
+                    )
+                        // ProtoLayoutThemeImpl.defaultTheme() (used if this isn't set) throws
+                        // "Unknown resource value type 0" trying to resolve its own bundled
+                        // font-family theme attributes against this app's plain
+                        // Theme.DeviceDefault-themed Activity -- it's built for the real Wear OS
+                        // tile-host process, which presumably provides those attributes some
+                        // other way. A minimal theme using plain system Typefaces directly
+                        // sidesteps that attribute-resolution path entirely; nothing here needs
+                        // the real Wear Material font.
+                        .setProtoLayoutTheme(SystemFontProtoLayoutTheme(activity))
+                        .build()
+                )
+                instance = viewInstance
+                renderFuture = viewInstance.renderAndAttach(layout.toProto(), resources.toProto(), frame)
+            }
+
+            try {
+                renderFuture?.get(10, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                Log.e("ScreenshotWalkTest", "$name: tile render failed", e)
+                return
+            }
+
+            var bitmap: Bitmap? = null
+            scenario.onActivity { activity ->
+                val frame = container ?: return@onActivity
+                frame.measure(
+                    View.MeasureSpec.makeMeasureSpec(screenWidthPx, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(screenHeightPx, View.MeasureSpec.EXACTLY)
+                )
+                frame.layout(0, 0, screenWidthPx, screenHeightPx)
+                bitmap = Bitmap.createBitmap(screenWidthPx, screenHeightPx, Bitmap.Config.ARGB_8888).also {
+                    frame.draw(Canvas(it))
+                }
+                instance?.detach(frame)
+                (activity.window.decorView as ViewGroup).removeView(frame)
+            }
+            bitmap?.let { publishScreenshot(it, name) }
+        }
     }
 
     // Finds a Book List row via its SwipeToRevealCard's testTag (see
@@ -438,5 +603,7 @@ class ScreenshotWalkTest {
         ActivityScenario.launch(SettingsActivity::class.java).use {
             takeScreenshot(it, "04_settings")
         }
+
+        captureContinueListeningTile("05_continue_listening_tile")
     }
 }

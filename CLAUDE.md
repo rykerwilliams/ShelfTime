@@ -157,26 +157,56 @@ is feasible.
   (not the whole remote library), the realistic win here is smaller than it looks —
   revisit only if this is actually measured as a hotspot.
 
-- **Screenshot-based documentation sprint** (planned, not started): auto-generate
-  up-to-date screenshots of the app's key screens and commit them to the repo, so
-  README/docs stay current without manual screenshotting. Not a Playwright job
-  (Playwright is browser-only, can't drive an Android/Wear OS emulator) — the direct
-  equivalent is Android's own UI Automator / Compose screenshot-testing APIs, driven
-  through the *same* Wear OS emulator `instrumented-test` already boots in CI, so no
-  new infrastructure is needed. Planned shape:
-  1. A setup step seeds a few realistic fake `LibraryItem`s straight into Room (same
-     pattern as `BookListActivityTapTest`'s seeding) — some in-progress for "Continue
-     Listening," one fully downloaded, one mid-download — so screenshots actually show
-     the features off, with no dependency on a real Audiobookshelf server.
-  2. A "screenshot walk" instrumented test drives through Book List → Chapter List →
-     Book Management → Now Playing → Settings via `ActivityScenario` + Compose test
-     APIs, capturing each via `composeTestRule.onRoot().captureToImage()`.
-  3. A new `generate-screenshots.yml` workflow (manual `workflow_dispatch` trigger,
-     not on every push) boots the emulator, runs the walk, `adb pull`s the images,
-     and commits them to `docs/screenshots/` (referenced from README.md) or uploads
-     as an artifact.
-  4. Optionally wire into the release process as a manual step alongside the
-     existing version-bump step.
+- **Screenshot-based documentation sprint** (shipped): auto-generates screenshots of the
+  app's key screens and commits them to `docs/screenshots/` (referenced from
+  `docs/SCREENS.md`), so docs stay current without manual screenshotting. Not a
+  Playwright job (Playwright is browser-only, can't drive an Android/Wear OS emulator);
+  `ScreenshotWalkTest` (instrumented) drives through Book List (resting + all three
+  swipe-to-reveal states) → Chapter List (resting + mid-download) → Book Management
+  (resting + downloaded) → Settings, via `ActivityScenario`, seeding a few realistic
+  fake `LibraryItem`s into Room first (no dependency on a real Audiobookshelf server).
+  Two things had to be fixed to get a real screenshot out of the headless CI emulator:
+  `UiAutomation.takeScreenshot()` silently returns null on this software-rendered
+  emulator (logcat showed "Failed to find ColorBuffer"), so each screen is instead
+  captured by drawing the activity's own `decorView` into a `Bitmap` via `Canvas`
+  directly, sidestepping the display pipeline entirely; and the app-private
+  `getExternalFilesDir()` tree is invisible to `adb pull` under scoped storage even
+  with root adb, so screenshots are published via `MediaStore` into a public
+  `Pictures/ShelfTimeScreenshots` collection instead, which plain `adb pull` can read.
+  `generate-screenshots.yml` (manual `workflow_dispatch` trigger, not on every push,
+  since this doesn't assert anything — `build-apk.yml`'s regular `instrumented-test`
+  job excludes `ScreenshotWalkTest` via its `notClass` filter) boots the emulator, runs
+  the walk, pulls the images, and commits them straight to `docs/screenshots/`.
+  Book List's swipe-to-reveal states specifically use the officially documented
+  Compose/UiAutomator interop pattern (`Modifier.testTagsAsResourceId` +
+  `Modifier.testTag(...)` + `UiDevice.findObject(By.res(...))` +
+  `UiObject2.swipe(Direction, percent)`) rather than locating rows by title text and
+  hand-computing swipe coordinates, which was unreliable across several tuning
+  attempts (speed, ancestor-bounds-walking, distance, timing — see
+  `ScreenshotWalkTest.swipeRowOpen()`'s doc comment for the full list) for reasons
+  that never fully made sense; finding the actual swipeable element by id and using
+  its own built-in gesture, calibrated against its real bounds, fixed all three states
+  on the first attempt.
+  - **Continue Listening Tile screenshot** (shipped, added alongside the Tile's own
+    Phase 5 test-coverage pass): pinning the tile on the emulator's real tile carousel
+    and automating a swipe to it would mean driving Wear OS's system UI — exactly the
+    kind of fragile automation `swipeRowOpen()` above already fought through once.
+    Instead, `ScreenshotWalkTest.captureContinueListeningTile()` renders the tile
+    in-process: drives `ContinueListeningTileService.onTileRequest` directly (via
+    `ContinueListeningTileServiceTest`'s `TestableContinueListeningTileService` double,
+    reused rather than duplicated — it's `class`, not `private class`, specifically for
+    this), then inflates the resulting `Layout`/`Resources` into a real `View` via the
+    new `androidx.wear.protolayout:protolayout-renderer` dependency's
+    `ProtoLayoutViewInstance.renderAndAttach(...)`, attached to a throwaway
+    `FrameLayout` inside `BookListActivity`'s own window (any already-manifested
+    Activity works as a host). `renderAndAttach()` must be called on the UI thread but
+    returns a `ListenableFuture` that completes asynchronously (inflation runs in the
+    background) — kicking it off inside one `ActivityScenario.onActivity { }` block and
+    awaiting the future from the test thread afterwards (not inside `onActivity { }`,
+    which would block the very UI thread the completion callback needs) avoids a
+    deadlock; a second `onActivity { }` block then does the actual measure/layout/draw
+    once inflation has genuinely finished. Saved as `05_continue_listening_tile.png`
+    through the same `publishScreenshot()` helper as every other screen.
 
 ## Release history this fork has cut
 

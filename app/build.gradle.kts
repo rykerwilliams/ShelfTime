@@ -134,6 +134,13 @@ dependencies {
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+    // Renders a Tile's LayoutElement into a real View for ScreenshotWalkTest, sidestepping
+    // the emulator's tile carousel/system UI entirely -- test-only, never shipped in the app.
+    androidTestImplementation("androidx.wear.protolayout:protolayout-renderer:1.4.0")
+    // protolayout-renderer's own build depends on this as "implementation" (not "api"), so
+    // its Layout/Resources proto types -- which ProtoLayoutViewInstance.renderAndAttach()
+    // takes directly -- aren't exposed transitively; has to be declared explicitly here too.
+    androidTestImplementation("androidx.wear.protolayout:protolayout-proto:1.4.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 

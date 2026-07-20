@@ -127,3 +127,25 @@ Space.
   automatically once a limit is reached, and starting a *new* download
   that would exceed either limit is blocked (manual deletion required)
   rather than auto-evicted.
+
+## Continue Listening Tile
+
+![Continue Listening Tile](screenshots/05_continue_listening_tile.png)
+
+A Wear OS Tile (swipe over from the watch face) showing the same
+"what should I continue" info the Book List's Continue Listening row
+does, so a book can be resumed without opening the app at all.
+
+- Shows the most recent in-progress book's title and author, plus its
+  cover art if already cached locally (no network fetch from the tile
+  itself -- see `CLAUDE.md`'s Tile backlog notes for why).
+- **Tap**: launches straight into Now Playing for that book. If nothing
+  is in progress, the tile falls back to an "Open ShelfTime" button that
+  opens the Book List instead.
+- Refreshes on real playback events (pause, track change, book finished)
+  rather than polling, so it stays current without draining battery.
+- This screenshot is captured in-process (`ScreenshotWalkTest`, via
+  `androidx.wear.protolayout:protolayout-renderer`) rather than by
+  pinning the tile on the emulator's real tile carousel, so it renders
+  the tile's actual built layout without needing Wear OS system-UI
+  automation.
