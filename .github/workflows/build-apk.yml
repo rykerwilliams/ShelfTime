@@ -146,6 +146,9 @@ jobs:
             echo "===== logcat: crashes / JUnit runner errors ====="
             adb logcat -d | grep -E -A 80 "FATAL EXCEPTION|AndroidJUnitRunner|Failed to instantiate|Caused by|initializationError" | head -400
             echo "===== end logcat ====="
+            echo "===== androidTest XML results (full stack traces) ====="
+            find app/build/outputs/androidTest-results -name "*.xml" -exec echo "--- {} ---" \; -exec cat {} \;
+            echo "===== end androidTest XML results ====="
             exit $(cat /tmp/gradle_exit_code.txt)
 
       - name: Upload instrumented test report

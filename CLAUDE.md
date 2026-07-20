@@ -60,7 +60,7 @@ is feasible.
 
 ## Known deferred / backlog items
 
-- **"Continue Listening" Tile** (Phases 1-4 shipped, phase 5 not started): a Wear OS
+- **"Continue Listening" Tile** (all 5 phases shipped): a Wear OS
   Tile (swipe over from the watch face) surfacing the same "what should I continue"
   info Book List already shows, so a book can be resumed without opening the app.
   Uses `androidx.wear.tiles`/`androidx.wear.protolayout` (Tiles 1.6.0, ProtoLayout
@@ -126,9 +126,26 @@ is feasible.
      *not* wired into `startPeriodicProgressSaving()`'s ~30s loop — that would refresh
      the tile every few seconds during active playback for no visible benefit, since the
      tile shows title/author/cover, not a live position.
-  5. Instrumented test using the Tiles testing library, asserting the built layout
-     contains the expected title text given seeded Room state (same seeding pattern
-     as `ScreenshotWalkTest`) — runs in the same CI Wear OS emulator, no new infra.
+  5. **Shipped** — `ContinueListeningTileServiceTest` (instrumented, same Wear OS
+     emulator, no new CI infra), seeding one in-progress `LibraryItem` into Room
+     (same pattern as `ScreenshotWalkTest`) and asserting the built tile's layout
+     contains its title/author text. This phase's original plan (use
+     `androidx.wear.tiles:tiles-testing`'s `TestTileClient`) turned out to also be
+     based on a wrong assumption, same shape as Phase 3's: that library's
+     `TestTileClient` is Robolectric-based under the hood (`ServiceController`/
+     `shadowOf` from `org.robolectric.*`), and this project has deliberately avoided
+     adding Robolectric so far (see the testing-philosophy section above) — pulling
+     it in just for one test would be exactly the "bigger decision" that note warns
+     against. Instead, the test drives `onTileRequest` directly: `TileService`'s
+     `onTileRequest`/`onTileResourcesRequest` are `protected`, so a small test-only
+     subclass (`TestableContinueListeningTileService`) widens `onTileRequest` to
+     `public` (legal in Kotlin — overrides may widen but not narrow visibility) and
+     exposes `attachBaseContext` (also `protected`, on `ContextWrapper`) so the test
+     can attach a real target `Context` without going through the full Service
+     lifecycle. The returned `Tile`'s `LayoutElement` tree (`Tile.tileTimeline` →
+     `TimelineEntry.layout` → `Layout.root`) is walked recursively through
+     `Box`/`Column`/`Row` looking for `Text` nodes, since Material3's `button()`
+     composes an unknown-depth tree rather than a single flat element.
 
 - **`SmartDeleteManager.performSmartDelete()`** calls
   `database.libraryItemDao().getAllLibraryItems()` then filters in Kotlin for

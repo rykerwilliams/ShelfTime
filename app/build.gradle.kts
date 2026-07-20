@@ -85,7 +85,6 @@ dependencies {
     implementation("com.google.firebase:firebase-crashlytics:20.0.1")
     val roomVersion = "2.8.4"
     implementation("androidx.room:room-runtime:$roomVersion")
-    annotationProcessor("androidx.room:room-compiler:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
 

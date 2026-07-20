@@ -43,7 +43,10 @@ import java.nio.ByteBuffer
  * See CLAUDE.md's Tiles backlog entry for the remaining phases (freshness triggering,
  * instrumented test).
  */
-class ContinueListeningTileService : TileService() {
+// open so ContinueListeningTileServiceTest's TestableContinueListeningTileService can
+// subclass it (Kotlin classes are final by default; kapt's generated Java stub inherits
+// that finality, which is what actually blocked the test -- see the test file's comment).
+open class ContinueListeningTileService : TileService() {
 
     override fun onTileRequest(
         requestParams: RequestBuilders.TileRequest
