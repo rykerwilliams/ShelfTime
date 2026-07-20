@@ -90,9 +90,11 @@ open class ContinueListeningTileService : TileService() {
         return ContinueListeningSelector.select(items).firstOrNull()
     }
 
-    private fun labelFor(item: LibraryItem?): String = item?.title ?: "Open ShelfTime"
+    // internal (not private): ContinueListeningTileServiceTest asserts on these directly
+    // rather than re-deriving them by walking the rendered LayoutElement tree.
+    internal fun labelFor(item: LibraryItem?): String = item?.title ?: "Open ShelfTime"
 
-    private fun launchActionFor(item: LibraryItem?): ActionBuilders.Action {
+    internal fun launchActionFor(item: LibraryItem?): ActionBuilders.Action {
         val activityBuilder = ActionBuilders.AndroidActivity.Builder()
             .setPackageName(packageName)
         if (item != null) {
@@ -107,7 +109,7 @@ open class ContinueListeningTileService : TileService() {
             .build()
     }
 
-    private fun coverImageResource(itemId: String): ResourceBuilders.ImageResource? {
+    internal fun coverImageResource(itemId: String): ResourceBuilders.ImageResource? {
         val file = File(applicationContext.cacheDir, "$itemId.jpg")
         if (!file.exists()) return null
         val decoded = BitmapFactory.decodeFile(file.path) ?: return null
@@ -142,6 +144,6 @@ open class ContinueListeningTileService : TileService() {
 
     companion object {
         private const val COVER_RESOURCE_ID = "cover_art"
-        private const val COVER_TILE_SIZE_PX = 64
+        internal const val COVER_TILE_SIZE_PX = 64
     }
 }
