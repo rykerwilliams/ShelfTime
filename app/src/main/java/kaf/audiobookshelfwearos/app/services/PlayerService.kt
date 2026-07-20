@@ -24,6 +24,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
+import androidx.wear.tiles.TileService
 import kaf.audiobookshelfwearos.R
 import kaf.audiobookshelfwearos.app.ApiHandler
 import kaf.audiobookshelfwearos.app.MainApp
@@ -31,6 +32,7 @@ import kaf.audiobookshelfwearos.app.activities.PlayerActivity
 import kaf.audiobookshelfwearos.app.data.Chapter
 import kaf.audiobookshelfwearos.app.data.LibraryItem
 import kaf.audiobookshelfwearos.app.data.room.AppDatabase
+import kaf.audiobookshelfwearos.app.tiles.ContinueListeningTileService
 import kaf.audiobookshelfwearos.app.userdata.UserDataManager
 import kaf.audiobookshelfwearos.app.utils.ChapterResolver
 import kaf.audiobookshelfwearos.app.utils.NetworkConnectivityManager
@@ -273,6 +275,7 @@ class PlayerService : MediaSessionService() {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 super.onMediaItemTransition(mediaItem, reason)
                 updateUIMetadata()
+                requestContinueListeningTileUpdate()
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
@@ -307,6 +310,7 @@ class PlayerService : MediaSessionService() {
                     Player.STATE_ENDED -> {
                         Timber.d("ExoPlayer has ended")
                         sendBroadcast(Intent("$packageName.ACTION_TRACK_ENDED"))
+                        requestContinueListeningTileUpdate()
                     }
 
                     Player.STATE_IDLE -> {
@@ -340,6 +344,7 @@ class PlayerService : MediaSessionService() {
                     pausedAtMs = System.currentTimeMillis()
                     stopPeriodicProgressSaving()
                     saveProgress() // Final save on pause
+                    requestContinueListeningTileUpdate()
                     sendBroadcast(Intent("$packageName.${PlayerBroadcastActions.PAUSED}"))
                     val currentTime = System.currentTimeMillis()
                     totalPlaybackTime += currentTime - playbackStartTime
@@ -366,6 +371,14 @@ class PlayerService : MediaSessionService() {
                 }
             }
         })
+    }
+
+    // Continue Listening Tile Phase 4: refresh on real state transitions (pause, track
+    // change, book finished) only -- not from startPeriodicProgressSaving()'s ~30s loop,
+    // which would otherwise refresh the tile every few seconds during active playback for
+    // no visible benefit (the tile shows title/author/cover, not a live position).
+    private fun requestContinueListeningTileUpdate() {
+        TileService.getUpdater(this).requestUpdate(ContinueListeningTileService::class.java)
     }
 
     // Enhanced saveProgress method with periodic flag
