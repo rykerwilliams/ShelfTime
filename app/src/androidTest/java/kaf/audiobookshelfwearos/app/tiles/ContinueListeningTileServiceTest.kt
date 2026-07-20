@@ -41,7 +41,10 @@ import java.util.concurrent.TimeUnit
 // Robolectric-based under the hood, which this project has deliberately avoided so far --
 // see CLAUDE.md's testing philosophy notes -- so this drives onTileRequest directly on a
 // real device/emulator instead).
-private class TestableContinueListeningTileService : ContinueListeningTileService() {
+//
+// Not private: ScreenshotWalkTest reuses this same test double to render the tile for a
+// screenshot, rather than duplicating it.
+class TestableContinueListeningTileService : ContinueListeningTileService() {
     fun attachContext(context: Context) {
         attachBaseContext(context)
     }
