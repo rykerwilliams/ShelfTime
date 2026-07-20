@@ -71,8 +71,11 @@ class ContinueListeningTileServiceTest {
 
     @After
     fun removeSeededItem() = runBlocking {
-        database().libraryItemDao().getLibraryItemById(itemId)?.let {
-            database().libraryItemDao().deleteLibraryItem(it)
+        // Not `?.let { }` -- that expression's type is Unit?, and JUnit rejects an
+        // @After method whose return type isn't exactly Unit ("should be void").
+        val item = database().libraryItemDao().getLibraryItemById(itemId)
+        if (item != null) {
+            database().libraryItemDao().deleteLibraryItem(item)
         }
     }
 
